@@ -17,10 +17,12 @@ import json
 from collections import defaultdict
 import sqlite3
 import warnings
+import yfinance as yf
+import requests
 warnings.filterwarnings('ignore')
 
 # ============================================
-# 🔧 تحسينات الأداء الذكية
+# 🔧 Performance Settings
 # ============================================
 
 CACHE_DURATION_DATA = 300
@@ -28,37 +30,204 @@ CACHE_DURATION_ANALYSIS = 600
 RATE_LIMIT_SECONDS = 3
 MAX_CANDLES = 500
 
-# ✅ بيانات المسؤول
+# Admin credentials
 ADMIN_USERNAME = "adminSO"
 ADMIN_PASSWORD = "admin25SO"
 SUBSCRIPTION_PRICE = "99$"
 
+# Forex symbols
+FOREX_SYMBOLS = ['XAUUSD', 'XAU/USD', 'GOLD', 'GC=F',
+                'EURUSD', 'EUR/USD', 'GBPUSD', 'GBP/USD',
+                'USDJPY', 'USD/JPY', 'AUDUSD', 'AUD/USD',
+                'USDCAD', 'USD/CAD', 'NZDUSD', 'NZD/USD']
+
 # ============================================
-# 🏦 KuCoin بدلاً من Binance
+# 📊 Exchange Manager (KuCoin + Forex)
 # ============================================
 
 @st.cache_resource
 def get_exchange():
-    """استخدام KuCoin بدلاً من Binance (يعمل في جميع الدول)"""
-    return ccxt.kucoin({
-        'rateLimit': 3000,
-        'enableRateLimit': True,
-        'options': {
-            'defaultType': 'spot',
-            'adjustForTimeDifference': True,
-        }
-    })
+    """KuCoin for crypto - works everywhere"""
+    try:
+        exchange = ccxt.kucoin({
+            'rateLimit': 3000,
+            'enableRateLimit': True,
+            'options': {
+                'defaultType': 'spot',
+                'adjustForTimeDifference': True,
+            }
+        })
+        # Test connection
+        exchange.fetch_ohlcv('BTC/USDT', '1h', limit=1)
+        return exchange
+    except Exception as e:
+        st.error(f"❌ KuCoin connection failed: {str(e)}")
+        return None
+
+class ForexDataManager:
+    """Forex & Gold data from multiple sources"""
+    
+    @staticmethod
+    def fetch_forex_data(symbol, timeframe='1h', limit=500):
+        """Fetch forex/gold data from multiple sources"""
+        
+        # Try Yahoo Finance first
+        df = ForexDataManager._fetch_yfinance(symbol, timeframe, limit)
+        if df is not None:
+            return df
+        
+        # Try OANDA API (requires API key)
+        df = ForexDataManager._fetch_oanda(symbol, timeframe, limit)
+        if df is not None:
+            return df
+        
+        return None
+    
+    @staticmethod
+    def _fetch_yfinance(symbol, timeframe='1h', limit=500):
+        """Fetch from Yahoo Finance"""
+        try:
+            ticker_map = {
+                'XAUUSD': 'XAUUSD=X',
+                'XAU/USD': 'XAUUSD=X',
+                'GOLD': 'GC=F',
+                'XAUUSD=X': 'XAUUSD=X',
+                'GC=F': 'GC=F',
+                'EURUSD': 'EURUSD=X',
+                'EUR/USD': 'EURUSD=X',
+                'GBPUSD': 'GBPUSD=X',
+                'GBP/USD': 'GBPUSD=X',
+                'USDJPY': 'USDJPY=X',
+                'USD/JPY': 'USDJPY=X',
+                'AUDUSD': 'AUDUSD=X',
+                'AUD/USD': 'AUDUSD=X',
+                'USDCAD': 'USDCAD=X',
+                'USD/CAD': 'USDCAD=X',
+                'NZDUSD': 'NZDUSD=X',
+                'NZD/USD': 'NZDUSD=X',
+            }
+            
+            ticker = ticker_map.get(symbol, symbol)
+            
+            # Map timeframe to yfinance interval
+            interval_map = {
+                '1m': '1m', '2m': '2m', '5m': '5m', '15m': '15m',
+                '30m': '30m', '1h': '60m', '4h': '1h', 
+                '1d': '1d', '1w': '1wk'
+            }
+            interval = interval_map.get(timeframe, '60m')
+            
+            # Calculate period based on limit
+            period_map = {
+                100: '5d', 200: '1mo', 500: '2mo', 
+                1000: '6mo', 2000: '1y', 5000: '2y'
+            }
+            period = period_map.get(limit, '2mo')
+            
+            data = yf.download(ticker, period=period, interval=interval, progress=False)
+            
+            if data.empty:
+                return None
+            
+            df = data.reset_index()
+            df.columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+            
+            # Add volume if missing
+            if 'volume' not in df.columns:
+                df['volume'] = 0
+            
+            return df
+            
+        except Exception as e:
+            return None
+    
+    @staticmethod
+    def _fetch_oanda(symbol, timeframe='1h', limit=500):
+        """Fetch from OANDA API (requires API key)"""
+        try:
+            # OANDA API key from environment or session
+            api_key = os.environ.get('OANDA_API_KEY', '')
+            account_id = os.environ.get('OANDA_ACCOUNT_ID', '')
+            
+            if not api_key or not account_id:
+                return None
+            
+            # Map symbol to OANDA format
+            oanda_symbol = symbol.replace('/', '_').replace('USD', 'USD')
+            
+            # Map timeframe
+            granularity_map = {
+                '1m': 'M1', '5m': 'M5', '15m': 'M15', '30m': 'M30',
+                '1h': 'H1', '4h': 'H4', '1d': 'D', '1w': 'W'
+            }
+            granularity = granularity_map.get(timeframe, 'H1')
+            
+            url = f"https://api-fxtrade.oanda.com/v3/instruments/{oanda_symbol}/candles"
+            headers = {
+                'Authorization': f'Bearer {api_key}',
+                'Accept-Datetime-Format': 'RFC3339'
+            }
+            params = {
+                'granularity': granularity,
+                'count': limit,
+                'price': 'M'
+            }
+            
+            response = requests.get(url, headers=headers, params=params, timeout=10)
+            
+            if response.status_code != 200:
+                return None
+            
+            data = response.json()
+            
+            if 'candles' not in data:
+                return None
+            
+            candles = []
+            for candle in data['candles']:
+                candles.append({
+                    'timestamp': candle['time'],
+                    'open': float(candle['mid']['o']),
+                    'high': float(candle['mid']['h']),
+                    'low': float(candle['mid']['l']),
+                    'close': float(candle['mid']['c']),
+                    'volume': candle.get('volume', 0)
+                })
+            
+            df = pd.DataFrame(candles)
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            
+            return df
+            
+        except Exception as e:
+            return None
+
+# ============================================
+# 🏦 Main Data Fetcher
+# ============================================
 
 @st.cache_data(ttl=CACHE_DURATION_DATA)
 def fetch_candles_cached(symbol, timeframe='1h', limit=500):
+    """Fetch data from appropriate source"""
+    
+    # Check if forex symbol
+    if symbol in FOREX_SYMBOLS:
+        df = ForexDataManager.fetch_forex_data(symbol, timeframe, limit)
+        if df is not None and not df.empty:
+            return df
+    
+    # If not forex, use KuCoin for crypto
     exchange = get_exchange()
+    if not exchange:
+        return None
+    
     try:
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         return df
     except Exception as e:
-        st.error(f"❌ خطأ في جلب البيانات: {str(e)}")
+        st.error(f"❌ Failed to fetch {symbol}: {str(e)}")
         return None
 
 @st.cache_data(ttl=CACHE_DURATION_ANALYSIS)
@@ -96,13 +265,13 @@ def check_rate_limit():
     current_time = time.time()
     if current_time - st.session_state.last_click < RATE_LIMIT_SECONDS:
         wait = RATE_LIMIT_SECONDS - (current_time - st.session_state.last_click)
-        st.warning(f"⏳ انتظر {int(wait) + 1} ثواني قبل المحاولة مرة أخرى")
+        st.warning(f"⏳ Wait {int(wait) + 1} seconds before trying again")
         return False
     st.session_state.last_click = current_time
     return True
 
 # ============================================
-# 🗄️ نظام إدارة المستخدمين باستخدام SQLite
+# 🗄️ User Management System
 # ============================================
 
 class UserManager:
@@ -112,7 +281,6 @@ class UserManager:
         self._ensure_admin()
         
     def _init_db(self):
-        """تهيئة قاعدة البيانات"""
         try:
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
@@ -136,10 +304,9 @@ class UserManager:
             conn.close()
             
         except Exception as e:
-            print(f"❌ خطأ في تهيئة قاعدة البيانات: {e}")
+            print(f"❌ DB init error: {e}")
     
     def _ensure_admin(self):
-        """التأكد من وجود حساب المسؤول"""
         try:
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
@@ -166,16 +333,16 @@ class UserManager:
             conn.close()
             
         except Exception as e:
-            print(f"❌ خطأ في التحقق من المسؤول: {e}")
+            print(f"❌ Admin check error: {e}")
     
     def _hash_password(self, password):
         return hashlib.sha256(password.encode()).hexdigest()
     
     def register_user(self, username, password, email=""):
         if len(username) < 3:
-            return False, "❌ اسم المستخدم يجب أن يكون 3 أحرف على الأقل!"
+            return False, "❌ Username must be at least 3 characters!"
         if len(password) < 4:
-            return False, "❌ كلمة المرور يجب أن تكون 4 أحرف على الأقل!"
+            return False, "❌ Password must be at least 4 characters!"
         
         try:
             conn = sqlite3.connect(self.db_file)
@@ -184,7 +351,7 @@ class UserManager:
             cursor.execute("SELECT * FROM users WHERE username=?", (username,))
             if cursor.fetchone():
                 conn.close()
-                return False, "❌ اسم المستخدم موجود بالفعل!"
+                return False, "❌ Username already exists!"
             
             cursor.execute('''
                 INSERT INTO users 
@@ -202,10 +369,10 @@ class UserManager:
             
             conn.commit()
             conn.close()
-            return True, "✅ تم التسجيل بنجاح! انتظر تفعيل حسابك من قبل المسؤول."
+            return True, "✅ Registration successful! Wait for admin activation."
             
         except Exception as e:
-            return False, f"❌ خطأ في التسجيل: {str(e)}"
+            return False, f"❌ Registration error: {str(e)}"
     
     def login_user(self, username, password):
         try:
@@ -217,29 +384,29 @@ class UserManager:
             
             if not user:
                 conn.close()
-                return False, "❌ اسم المستخدم غير موجود!"
+                return False, "❌ Username not found!"
             
             if user[3] == 0:
                 conn.close()
-                return False, "⛔ حسابك غير مفعل! يرجى الدفع عبر تلغرام لتفعيل الحساب."
+                return False, "⛔ Account not activated! Please contact admin."
             
             if user[1] != self._hash_password(password):
                 conn.close()
-                return False, "❌ كلمة مرور خاطئة!"
+                return False, "❌ Incorrect password!"
             
             cursor.execute("UPDATE users SET last_login=? WHERE username=?", 
                          (datetime.now().isoformat(), username))
             conn.commit()
             conn.close()
             
-            return True, "✅ تم تسجيل الدخول بنجاح!"
+            return True, "✅ Login successful!"
             
         except Exception as e:
-            return False, f"❌ خطأ في تسجيل الدخول: {str(e)}"
+            return False, f"❌ Login error: {str(e)}"
     
     def activate_user(self, username):
         if username == ADMIN_USERNAME:
-            return False, "❌ المسؤول مفعل تلقائياً!"
+            return False, "❌ Admin is already activated!"
         
         try:
             conn = sqlite3.connect(self.db_file)
@@ -248,7 +415,7 @@ class UserManager:
             cursor.execute("SELECT * FROM users WHERE username=?", (username,))
             if not cursor.fetchone():
                 conn.close()
-                return False, "❌ المستخدم غير موجود!"
+                return False, "❌ User not found!"
             
             expiry = datetime.now() + timedelta(days=30)
             cursor.execute('''
@@ -259,14 +426,14 @@ class UserManager:
             
             conn.commit()
             conn.close()
-            return True, f"✅ تم تفعيل حساب {username} بنجاح!"
+            return True, f"✅ Account {username} activated!"
             
         except Exception as e:
-            return False, f"❌ خطأ: {str(e)}"
+            return False, f"❌ Error: {str(e)}"
     
     def deactivate_user(self, username):
         if username == ADMIN_USERNAME:
-            return False, "❌ لا يمكن تعطيل المسؤول!"
+            return False, "❌ Cannot deactivate admin!"
         
         try:
             conn = sqlite3.connect(self.db_file)
@@ -280,10 +447,10 @@ class UserManager:
             
             conn.commit()
             conn.close()
-            return True, f"✅ تم تعطيل حساب {username}!"
+            return True, f"✅ Account {username} deactivated!"
             
         except Exception as e:
-            return False, f"❌ خطأ: {str(e)}"
+            return False, f"❌ Error: {str(e)}"
     
     def delete_user(self, username):
         if username == ADMIN_USERNAME:
@@ -294,7 +461,7 @@ class UserManager:
             conn.close()
             
             if admin_count <= 1:
-                return False, "❌ لا يمكن حذف المسؤول الوحيد!"
+                return False, "❌ Cannot delete the only admin!"
         
         try:
             conn = sqlite3.connect(self.db_file)
@@ -302,14 +469,14 @@ class UserManager:
             cursor.execute("DELETE FROM users WHERE username=?", (username,))
             conn.commit()
             conn.close()
-            return True, "✅ تم حذف المستخدم بنجاح!"
+            return True, "✅ User deleted!"
             
         except Exception as e:
-            return False, f"❌ خطأ: {str(e)}"
+            return False, f"❌ Error: {str(e)}"
     
     def make_admin(self, username):
         if username == ADMIN_USERNAME:
-            return False, "❌ هذا حساب المسؤول الرئيسي!"
+            return False, "❌ This is the main admin account!"
         
         try:
             conn = sqlite3.connect(self.db_file)
@@ -317,13 +484,13 @@ class UserManager:
             cursor.execute("UPDATE users SET is_admin=1 WHERE username=?", (username,))
             conn.commit()
             conn.close()
-            return True, f"✅ تم ترقية {username} إلى مسؤول!"
+            return True, f"✅ {username} promoted to admin!"
         except Exception as e:
-            return False, f"❌ خطأ: {str(e)}"
+            return False, f"❌ Error: {str(e)}"
     
     def remove_admin(self, username):
         if username == ADMIN_USERNAME:
-            return False, "❌ لا يمكن إلغاء صلاحية المسؤول الرئيسي!"
+            return False, "❌ Cannot remove main admin permissions!"
         
         try:
             conn = sqlite3.connect(self.db_file)
@@ -331,9 +498,9 @@ class UserManager:
             cursor.execute("UPDATE users SET is_admin=0 WHERE username=?", (username,))
             conn.commit()
             conn.close()
-            return True, f"✅ تم إلغاء صلاحية المسؤول عن {username}"
+            return True, f"✅ Admin permissions removed from {username}"
         except Exception as e:
-            return False, f"❌ خطأ: {str(e)}"
+            return False, f"❌ Error: {str(e)}"
     
     def extend_subscription(self, username, days=30):
         try:
@@ -357,9 +524,9 @@ class UserManager:
             
             conn.commit()
             conn.close()
-            return True, f"✅ تم تمديد اشتراك {username} لـ {days} يوماً"
+            return True, f"✅ Subscription extended for {username} (+{days} days)"
         except Exception as e:
-            return False, f"❌ خطأ: {str(e)}"
+            return False, f"❌ Error: {str(e)}"
     
     def get_pending_users(self):
         try:
@@ -491,7 +658,7 @@ class UserManager:
             return 0, 0, 0, 0
 
 # ============================================
-# 🎯 كاشف مناطق التصفية الصفراء
+# 🎯 Liquidation Zones Detector
 # ============================================
 
 class LiquidationZonesDetector:
@@ -537,7 +704,7 @@ class LiquidationZonesDetector:
                     'cluster_size': 1,
                     'timeframe': timeframe,
                     'color': 'rgba(255, 255, 0, 0.3)',
-                    'description': '🟢 منطقة تصفية صاعدة - Bullish Liquidation'
+                    'description': '🟢 Bullish Liquidation'
                 }
                 zones.append(zone)
             
@@ -560,7 +727,7 @@ class LiquidationZonesDetector:
                     'cluster_size': 1,
                     'timeframe': timeframe,
                     'color': 'rgba(255, 255, 0, 0.3)',
-                    'description': '🔴 منطقة تصفية هابطة - Bearish Liquidation'
+                    'description': '🔴 Bearish Liquidation'
                 }
                 zones.append(zone)
         
@@ -603,14 +770,14 @@ class LiquidationZonesDetector:
                     'cluster_size': len(cluster_zones),
                     'timeframe': cluster_zones[0]['timeframe'],
                     'color': 'rgba(255, 255, 0, 0.3)',
-                    'description': f"{cluster_zones[0]['description']} (مجموعة {len(cluster_zones)} نقاط)"
+                    'description': f"{cluster_zones[0]['description']} (x{len(cluster_zones)})"
                 }
                 clustered_zones.append(merged_zone)
         
         return clustered_zones
 
 # ============================================
-# 📊 فئة التحليل التقني
+# 📊 Main Analysis Class
 # ============================================
 
 class CryptoAnalyzer:
@@ -637,6 +804,9 @@ class CryptoAnalyzer:
         self.orange_magnetic_zones_1m = {}
         self.orange_magnetic_zones_4h = {}
         self.liquidation_detector = LiquidationZonesDetector()
+    
+    def is_forex(self, symbol):
+        return symbol in FOREX_SYMBOLS
     
     def fetch_data(self, symbol):
         try:
@@ -675,7 +845,7 @@ class CryptoAnalyzer:
             return df_1h, df_4h
             
         except Exception as e:
-            st.error(f"خطأ في جلب البيانات لـ {symbol}: {str(e)}")
+            st.error(f"Error fetching {symbol}: {str(e)}")
             return None, None
     
     def fetch_data_15m(self, symbol):
@@ -705,7 +875,7 @@ class CryptoAnalyzer:
             return df_15m
             
         except Exception as e:
-            st.error(f"خطأ في جلب البيانات 15m لـ {symbol}: {str(e)}")
+            st.error(f"Error fetching 15m for {symbol}: {str(e)}")
             return None
     
     def fetch_data_5m(self, symbol):
@@ -735,7 +905,7 @@ class CryptoAnalyzer:
             return df_5m
             
         except Exception as e:
-            st.error(f"خطأ في جلب البيانات 5m لـ {symbol}: {str(e)}")
+            st.error(f"Error fetching 5m for {symbol}: {str(e)}")
             return None
     
     def fetch_data_1m(self, symbol):
@@ -765,7 +935,7 @@ class CryptoAnalyzer:
             return df_1m
             
         except Exception as e:
-            st.error(f"خطأ في جلب البيانات 1m لـ {symbol}: {str(e)}")
+            st.error(f"Error fetching 1m for {symbol}: {str(e)}")
             return None
     
     def calculate_indicators_15m(self, df):
@@ -882,9 +1052,9 @@ class CryptoAnalyzer:
                     strength = min(points_density / 10, 1.0) * (1 - distance_pct / 10)
                     
                     if center_price > current_price:
-                        attraction_direction = "جذب لأعلى"
+                        attraction_direction = "↑"
                     else:
-                        attraction_direction = "جذب لأسفل"
+                        attraction_direction = "↓"
                     
                     if distance_pct < price_velocity * 2:
                         orange_zones.append({
@@ -895,7 +1065,7 @@ class CryptoAnalyzer:
                             'price_velocity': price_velocity,
                             'points_count': len(cluster_points),
                             'attraction_direction': attraction_direction,
-                            'description': f'🧲 منطقة جذب مغناطيسي ({attraction_direction})',
+                            'description': f'🧲 {attraction_direction}',
                             'color': 'rgba(255, 165, 0, 0.5)',
                             'width': 2 + strength * 2,
                             'dash': 'dot' if strength < 0.5 else 'solid'
@@ -947,9 +1117,9 @@ class CryptoAnalyzer:
                     strength = min(points_density / 10, 1.0) * (1 - distance_pct / 8)
                     
                     if center_price > current_price:
-                        attraction_direction = "جذب لأعلى"
+                        attraction_direction = "↑"
                     else:
-                        attraction_direction = "جذب لأسفل"
+                        attraction_direction = "↓"
                     
                     if distance_pct < price_velocity * 2:
                         orange_zones.append({
@@ -960,7 +1130,7 @@ class CryptoAnalyzer:
                             'price_velocity': price_velocity,
                             'points_count': len(cluster_points),
                             'attraction_direction': attraction_direction,
-                            'description': f'🧲 منطقة جذب مغناطيسي 15m ({attraction_direction})',
+                            'description': f'🧲{attraction_direction}',
                             'color': 'rgba(255, 165, 0, 0.5)',
                             'width': 2 + strength * 2,
                             'dash': 'dot' if strength < 0.5 else 'solid'
@@ -1012,9 +1182,9 @@ class CryptoAnalyzer:
                     strength = min(points_density / 10, 1.0) * (1 - distance_pct / 5)
                     
                     if center_price > current_price:
-                        attraction_direction = "جذب لأعلى"
+                        attraction_direction = "↑"
                     else:
-                        attraction_direction = "جذب لأسفل"
+                        attraction_direction = "↓"
                     
                     if distance_pct < price_velocity * 2:
                         orange_zones.append({
@@ -1025,7 +1195,7 @@ class CryptoAnalyzer:
                             'price_velocity': price_velocity,
                             'points_count': len(cluster_points),
                             'attraction_direction': attraction_direction,
-                            'description': f'🧲 منطقة جذب مغناطيسي 5m ({attraction_direction})',
+                            'description': f'🧲{attraction_direction}',
                             'color': 'rgba(255, 165, 0, 0.5)',
                             'width': 2 + strength * 2,
                             'dash': 'dot' if strength < 0.5 else 'solid'
@@ -1077,9 +1247,9 @@ class CryptoAnalyzer:
                     strength = min(points_density / 10, 1.0) * (1 - distance_pct / 3)
                     
                     if center_price > current_price:
-                        attraction_direction = "جذب لأعلى"
+                        attraction_direction = "↑"
                     else:
-                        attraction_direction = "جذب لأسفل"
+                        attraction_direction = "↓"
                     
                     if distance_pct < price_velocity * 1.5:
                         orange_zones.append({
@@ -1090,7 +1260,7 @@ class CryptoAnalyzer:
                             'price_velocity': price_velocity,
                             'points_count': len(cluster_points),
                             'attraction_direction': attraction_direction,
-                            'description': f'🧲 منطقة جذب مغناطيسي 1m ({attraction_direction})',
+                            'description': f'🧲{attraction_direction}',
                             'color': 'rgba(255, 165, 0, 0.5)',
                             'width': 1.5 + strength * 2,
                             'dash': 'dot' if strength < 0.5 else 'solid'
@@ -1142,9 +1312,9 @@ class CryptoAnalyzer:
                     strength = min(points_density / 10, 1.0) * (1 - distance_pct / 15)
                     
                     if center_price > current_price:
-                        attraction_direction = "جذب لأعلى"
+                        attraction_direction = "↑"
                     else:
-                        attraction_direction = "جذب لأسفل"
+                        attraction_direction = "↓"
                     
                     if distance_pct < price_velocity * 2:
                         orange_zones.append({
@@ -1155,7 +1325,7 @@ class CryptoAnalyzer:
                             'price_velocity': price_velocity,
                             'points_count': len(cluster_points),
                             'attraction_direction': attraction_direction,
-                            'description': f'🧲 منطقة جذب مغناطيسي 4H ({attraction_direction})',
+                            'description': f'🧲{attraction_direction}',
                             'color': 'rgba(255, 165, 0, 0.5)',
                             'width': 2 + strength * 2,
                             'dash': 'dot' if strength < 0.5 else 'solid'
@@ -1209,7 +1379,7 @@ class CryptoAnalyzer:
                     'type': 'support_zone',
                     'strength': strength,
                     'volume': 0,
-                    'description': f'🟡 منطقة دعم صفراء (قوة: {strength:.2f})',
+                    'description': f'🟡 S ({strength:.2f})',
                     'color': '#FFFF00',
                     'width': 1 + (strength * 2),
                     'dash': 'dash',
@@ -1222,7 +1392,7 @@ class CryptoAnalyzer:
                     'type': 'resistance_zone',
                     'strength': strength,
                     'volume': 0,
-                    'description': f'🟡 منطقة مقاومة صفراء (قوة: {strength:.2f})',
+                    'description': f'🟡 R ({strength:.2f})',
                     'color': '#FFFF00',
                     'width': 1 + (strength * 2),
                     'dash': 'dash',
@@ -1277,7 +1447,7 @@ class CryptoAnalyzer:
                     'type': 'support_zone_15m',
                     'strength': strength,
                     'volume': 0,
-                    'description': f'🟡 منطقة دعم 15m صفراء (قوة: {strength:.2f})',
+                    'description': f'🟡 S15 ({strength:.2f})',
                     'color': '#FFFF00',
                     'width': 1 + (strength * 2),
                     'dash': 'dash',
@@ -1290,7 +1460,7 @@ class CryptoAnalyzer:
                     'type': 'resistance_zone_15m',
                     'strength': strength,
                     'volume': 0,
-                    'description': f'🟡 منطقة مقاومة 15m صفراء (قوة: {strength:.2f})',
+                    'description': f'🟡 R15 ({strength:.2f})',
                     'color': '#FFFF00',
                     'width': 1 + (strength * 2),
                     'dash': 'dash',
@@ -1345,7 +1515,7 @@ class CryptoAnalyzer:
                     'type': 'support_zone_5m',
                     'strength': strength,
                     'volume': 0,
-                    'description': f'🟡 منطقة دعم 5m صفراء (قوة: {strength:.2f})',
+                    'description': f'🟡 S5 ({strength:.2f})',
                     'color': '#FFFF00',
                     'width': 1 + (strength * 2),
                     'dash': 'dash',
@@ -1358,7 +1528,7 @@ class CryptoAnalyzer:
                     'type': 'resistance_zone_5m',
                     'strength': strength,
                     'volume': 0,
-                    'description': f'🟡 منطقة مقاومة 5m صفراء (قوة: {strength:.2f})',
+                    'description': f'🟡 R5 ({strength:.2f})',
                     'color': '#FFFF00',
                     'width': 1 + (strength * 2),
                     'dash': 'dash',
@@ -1413,7 +1583,7 @@ class CryptoAnalyzer:
                     'type': 'support_zone_1m',
                     'strength': strength,
                     'volume': 0,
-                    'description': f'🟡 منطقة دعم 1m صفراء (قوة: {strength:.2f})',
+                    'description': f'🟡 S1 ({strength:.2f})',
                     'color': '#FFFF00',
                     'width': 1 + (strength * 1.5),
                     'dash': 'dash',
@@ -1426,7 +1596,7 @@ class CryptoAnalyzer:
                     'type': 'resistance_zone_1m',
                     'strength': strength,
                     'volume': 0,
-                    'description': f'🟡 منطقة مقاومة 1m صفراء (قوة: {strength:.2f})',
+                    'description': f'🟡 R1 ({strength:.2f})',
                     'color': '#FFFF00',
                     'width': 1 + (strength * 1.5),
                     'dash': 'dash',
@@ -1481,7 +1651,7 @@ class CryptoAnalyzer:
                     'type': 'support_zone_4h',
                     'strength': strength,
                     'volume': 0,
-                    'description': f'🟡 منطقة دعم 4H صفراء (قوة: {strength:.2f})',
+                    'description': f'🟡 S4h ({strength:.2f})',
                     'color': '#FFFF00',
                     'width': 1 + (strength * 2),
                     'dash': 'dash',
@@ -1494,7 +1664,7 @@ class CryptoAnalyzer:
                     'type': 'resistance_zone_4h',
                     'strength': strength,
                     'volume': 0,
-                    'description': f'🟡 منطقة مقاومة 4H صفراء (قوة: {strength:.2f})',
+                    'description': f'🟡 R4h ({strength:.2f})',
                     'color': '#FFFF00',
                     'width': 1 + (strength * 2),
                     'dash': 'dash',
@@ -1532,7 +1702,7 @@ class CryptoAnalyzer:
                     'type': 'buy_liquidity',
                     'strength': min(0.8 + (lower_wick/total_range), 0.95),
                     'timeframe': 'immediate',
-                    'description': '🔵 رفض شرائي قوي (مطرقة)',
+                    'description': '🔵 B',
                     'color': '#1E90FF',
                     'width': 2 + (lower_wick/total_range * 3),
                     'dash': 'solid',
@@ -1548,7 +1718,7 @@ class CryptoAnalyzer:
                     'type': 'sell_liquidity',
                     'strength': min(0.8 + (upper_wick/total_range), 0.95),
                     'timeframe': 'immediate',
-                    'description': '🔵 رفض بيعي قوي (رجل مشنوق)',
+                    'description': '🔵 S',
                     'color': '#1E90FF',
                     'width': 2 + (upper_wick/total_range * 3),
                     'dash': 'solid',
@@ -1564,7 +1734,7 @@ class CryptoAnalyzer:
                         'type': 'buy_liquidity',
                         'strength': 0.6,
                         'timeframe': 'immediate',
-                        'description': '🔵 دعم عند دوجي',
+                        'description': '🔵 D',
                         'color': '#1E90FF',
                         'width': 1.5,
                         'dash': 'dot'
@@ -1575,7 +1745,7 @@ class CryptoAnalyzer:
                         'type': 'sell_liquidity',
                         'strength': 0.6,
                         'timeframe': 'immediate',
-                        'description': '🔵 مقاومة عند دوجي',
+                        'description': '🔵 D',
                         'color': '#1E90FF',
                         'width': 1.5,
                         'dash': 'dot'
@@ -1603,7 +1773,7 @@ class CryptoAnalyzer:
                     'type': 'sell_liquidity',
                     'strength': 0.7,
                     'timeframe': 'near',
-                    'description': '🔵 مقاومة قريبة',
+                    'description': '🔵 R',
                     'color': '#00BFFF',
                     'width': 2,
                     'dash': 'dash'
@@ -1616,7 +1786,7 @@ class CryptoAnalyzer:
                     'type': 'buy_liquidity',
                     'strength': 0.7,
                     'timeframe': 'near',
-                    'description': '🔵 دعم قريب',
+                    'description': '🔵 S',
                     'color': '#00BFFF',
                     'width': 2,
                     'dash': 'dash'
@@ -1659,7 +1829,7 @@ class CryptoAnalyzer:
                     'type': 'buy_liquidity_15m',
                     'strength': min(0.8 + (lower_wick/total_range), 0.95),
                     'timeframe': 'immediate_15m',
-                    'description': '🔵 رفض شرائي 15m قوي (مطرقة)',
+                    'description': '🔵 B15',
                     'color': '#1E90FF',
                     'width': 2 + (lower_wick/total_range * 3),
                     'dash': 'solid',
@@ -1675,7 +1845,7 @@ class CryptoAnalyzer:
                     'type': 'sell_liquidity_15m',
                     'strength': min(0.8 + (upper_wick/total_range), 0.95),
                     'timeframe': 'immediate_15m',
-                    'description': '🔵 رفض بيعي 15m قوي (رجل مشنوق)',
+                    'description': '🔵 S15',
                     'color': '#1E90FF',
                     'width': 2 + (upper_wick/total_range * 3),
                     'dash': 'solid',
@@ -1704,7 +1874,7 @@ class CryptoAnalyzer:
                     'type': 'sell_liquidity_15m',
                     'strength': 0.7,
                     'timeframe': 'near_15m',
-                    'description': '🔵 مقاومة 15m قريبة',
+                    'description': '🔵 R15',
                     'color': '#00BFFF',
                     'width': 2,
                     'dash': 'dash'
@@ -1717,7 +1887,7 @@ class CryptoAnalyzer:
                     'type': 'buy_liquidity_15m',
                     'strength': 0.7,
                     'timeframe': 'near_15m',
-                    'description': '🔵 دعم 15m قريب',
+                    'description': '🔵 S15',
                     'color': '#00BFFF',
                     'width': 2,
                     'dash': 'dash'
@@ -1760,7 +1930,7 @@ class CryptoAnalyzer:
                     'type': 'buy_liquidity_5m',
                     'strength': min(0.8 + (lower_wick/total_range), 0.95),
                     'timeframe': 'immediate_5m',
-                    'description': '🔵 رفض شرائي 5m قوي (مطرقة)',
+                    'description': '🔵 B5',
                     'color': '#1E90FF',
                     'width': 2 + (lower_wick/total_range * 3),
                     'dash': 'solid',
@@ -1776,7 +1946,7 @@ class CryptoAnalyzer:
                     'type': 'sell_liquidity_5m',
                     'strength': min(0.8 + (upper_wick/total_range), 0.95),
                     'timeframe': 'immediate_5m',
-                    'description': '🔵 رفض بيعي 5m قوي (رجل مشنوق)',
+                    'description': '🔵 S5',
                     'color': '#1E90FF',
                     'width': 2 + (upper_wick/total_range * 3),
                     'dash': 'solid',
@@ -1792,7 +1962,7 @@ class CryptoAnalyzer:
                         'type': 'buy_liquidity_5m',
                         'strength': 0.6,
                         'timeframe': 'immediate_5m',
-                        'description': '🔵 دعم 5m عند دوجي',
+                        'description': '🔵 D5',
                         'color': '#1E90FF',
                         'width': 1.5,
                         'dash': 'dot'
@@ -1803,7 +1973,7 @@ class CryptoAnalyzer:
                         'type': 'sell_liquidity_5m',
                         'strength': 0.6,
                         'timeframe': 'immediate_5m',
-                        'description': '🔵 مقاومة 5m عند دوجي',
+                        'description': '🔵 D5',
                         'color': '#1E90FF',
                         'width': 1.5,
                         'dash': 'dot'
@@ -1835,7 +2005,7 @@ class CryptoAnalyzer:
                     'type': 'sell_liquidity_5m',
                     'strength': 0.7,
                     'timeframe': 'near_5m',
-                    'description': '🔵 مقاومة 5m قريبة',
+                    'description': '🔵 R5',
                     'color': '#00BFFF',
                     'width': 2,
                     'dash': 'dash'
@@ -1848,7 +2018,7 @@ class CryptoAnalyzer:
                     'type': 'buy_liquidity_5m',
                     'strength': 0.7,
                     'timeframe': 'near_5m',
-                    'description': '🔵 دعم 5m قريب',
+                    'description': '🔵 S5',
                     'color': '#00BFFF',
                     'width': 2,
                     'dash': 'dash'
@@ -1891,7 +2061,7 @@ class CryptoAnalyzer:
                     'type': 'buy_liquidity_1m',
                     'strength': min(0.7 + (lower_wick/total_range), 0.9),
                     'timeframe': 'immediate_1m',
-                    'description': '🔵 رفض شرائي 1m سريع',
+                    'description': '🔵 B1',
                     'color': '#1E90FF',
                     'width': 1.5 + (lower_wick/total_range * 2),
                     'dash': 'solid',
@@ -1907,7 +2077,7 @@ class CryptoAnalyzer:
                     'type': 'sell_liquidity_1m',
                     'strength': min(0.7 + (upper_wick/total_range), 0.9),
                     'timeframe': 'immediate_1m',
-                    'description': '🔵 رفض بيعي 1m سريع',
+                    'description': '🔵 S1',
                     'color': '#1E90FF',
                     'width': 1.5 + (upper_wick/total_range * 2),
                     'dash': 'solid',
@@ -1923,7 +2093,7 @@ class CryptoAnalyzer:
                         'type': 'buy_liquidity_1m',
                         'strength': 0.55,
                         'timeframe': 'immediate_1m',
-                        'description': '🔵 دعم 1m سريع',
+                        'description': '🔵 D1',
                         'color': '#1E90FF',
                         'width': 1.2,
                         'dash': 'dot'
@@ -1934,7 +2104,7 @@ class CryptoAnalyzer:
                         'type': 'sell_liquidity_1m',
                         'strength': 0.55,
                         'timeframe': 'immediate_1m',
-                        'description': '🔵 مقاومة 1m سريعة',
+                        'description': '🔵 D1',
                         'color': '#1E90FF',
                         'width': 1.2,
                         'dash': 'dot'
@@ -1962,7 +2132,7 @@ class CryptoAnalyzer:
                     'type': 'sell_liquidity_1m',
                     'strength': 0.65,
                     'timeframe': 'near_1m',
-                    'description': '🔵 مقاومة 1m قريبة',
+                    'description': '🔵 R1',
                     'color': '#00BFFF',
                     'width': 1.8,
                     'dash': 'dash'
@@ -1975,7 +2145,7 @@ class CryptoAnalyzer:
                     'type': 'buy_liquidity_1m',
                     'strength': 0.65,
                     'timeframe': 'near_1m',
-                    'description': '🔵 دعم 1m قريب',
+                    'description': '🔵 S1',
                     'color': '#00BFFF',
                     'width': 1.8,
                     'dash': 'dash'
@@ -2018,7 +2188,7 @@ class CryptoAnalyzer:
                     'type': 'buy_liquidity_4h',
                     'strength': min(0.8 + (lower_wick/total_range), 0.95),
                     'timeframe': 'immediate_4h',
-                    'description': '🔵 رفض شرائي 4H قوي (مطرقة)',
+                    'description': '🔵 B4h',
                     'color': '#1E90FF',
                     'width': 2 + (lower_wick/total_range * 3),
                     'dash': 'solid',
@@ -2034,7 +2204,7 @@ class CryptoAnalyzer:
                     'type': 'sell_liquidity_4h',
                     'strength': min(0.8 + (upper_wick/total_range), 0.95),
                     'timeframe': 'immediate_4h',
-                    'description': '🔵 رفض بيعي 4H قوي (رجل مشنوق)',
+                    'description': '🔵 S4h',
                     'color': '#1E90FF',
                     'width': 2 + (upper_wick/total_range * 3),
                     'dash': 'solid',
@@ -2063,7 +2233,7 @@ class CryptoAnalyzer:
                     'type': 'sell_liquidity_4h',
                     'strength': 0.7,
                     'timeframe': 'near_4h',
-                    'description': '🔵 مقاومة 4H قريبة',
+                    'description': '🔵 R4h',
                     'color': '#00BFFF',
                     'width': 2,
                     'dash': 'dash'
@@ -2076,7 +2246,7 @@ class CryptoAnalyzer:
                     'type': 'buy_liquidity_4h',
                     'strength': 0.7,
                     'timeframe': 'near_4h',
-                    'description': '🔵 دعم 4H قريب',
+                    'description': '🔵 S4h',
                     'color': '#00BFFF',
                     'width': 2,
                     'dash': 'dash'
@@ -2108,7 +2278,7 @@ class CryptoAnalyzer:
                         'price': price,
                         'type': 'strong_support',
                         'strength': strength,
-                        'description': f'⚪ دعم قوي 4H (قوة: {strength:.2f})',
+                        'description': f'⚪ S ({strength:.2f})',
                         'color': 'white',
                         'width': 1 + (strength * 2),
                         'dash': 'dash'
@@ -2122,7 +2292,7 @@ class CryptoAnalyzer:
                         'price': price,
                         'type': 'strong_resistance',
                         'strength': strength,
-                        'description': f'⚪ مقاومة قوي 4H (قوة: {strength:.2f})',
+                        'description': f'⚪ R ({strength:.2f})',
                         'color': 'white',
                         'width': 1 + (strength * 2),
                         'dash': 'dash'
@@ -2147,7 +2317,7 @@ class CryptoAnalyzer:
                         'price': price,
                         'type': 'strong_support_15m',
                         'strength': strength,
-                        'description': f'⚪ دعم قوي 15m (قوة: {strength:.2f})',
+                        'description': f'⚪ S15 ({strength:.2f})',
                         'color': 'white',
                         'width': 1 + (strength * 2),
                         'dash': 'dash'
@@ -2161,7 +2331,7 @@ class CryptoAnalyzer:
                         'price': price,
                         'type': 'strong_resistance_15m',
                         'strength': strength,
-                        'description': f'⚪ مقاومة قوي 15m (قوة: {strength:.2f})',
+                        'description': f'⚪ R15 ({strength:.2f})',
                         'color': 'white',
                         'width': 1 + (strength * 2),
                         'dash': 'dash'
@@ -2186,7 +2356,7 @@ class CryptoAnalyzer:
                         'price': price,
                         'type': 'strong_support_5m',
                         'strength': strength,
-                        'description': f'⚪ دعم قوي 5m (قوة: {strength:.2f})',
+                        'description': f'⚪ S5 ({strength:.2f})',
                         'color': 'white',
                         'width': 1 + (strength * 2),
                         'dash': 'dash'
@@ -2200,7 +2370,7 @@ class CryptoAnalyzer:
                         'price': price,
                         'type': 'strong_resistance_5m',
                         'strength': strength,
-                        'description': f'⚪ مقاومة قوي 5m (قوة: {strength:.2f})',
+                        'description': f'⚪ R5 ({strength:.2f})',
                         'color': 'white',
                         'width': 1 + (strength * 2),
                         'dash': 'dash'
@@ -2225,7 +2395,7 @@ class CryptoAnalyzer:
                         'price': price,
                         'type': 'strong_support_1m',
                         'strength': strength,
-                        'description': f'⚪ دعم قوي 1m (قوة: {strength:.2f})',
+                        'description': f'⚪ S1 ({strength:.2f})',
                         'color': 'white',
                         'width': 1 + (strength * 1.5),
                         'dash': 'dash'
@@ -2239,7 +2409,7 @@ class CryptoAnalyzer:
                         'price': price,
                         'type': 'strong_resistance_1m',
                         'strength': strength,
-                        'description': f'⚪ مقاومة قوي 1m (قوة: {strength:.2f})',
+                        'description': f'⚪ R1 ({strength:.2f})',
                         'color': 'white',
                         'width': 1 + (strength * 1.5),
                         'dash': 'dash'
@@ -2264,7 +2434,7 @@ class CryptoAnalyzer:
                         'price': price,
                         'type': 'strong_support_4h',
                         'strength': strength,
-                        'description': f'⚪ دعم قوي 4H (قوة: {strength:.2f})',
+                        'description': f'⚪ S4h ({strength:.2f})',
                         'color': 'white',
                         'width': 1 + (strength * 2),
                         'dash': 'dash'
@@ -2278,7 +2448,7 @@ class CryptoAnalyzer:
                         'price': price,
                         'type': 'strong_resistance_4h',
                         'strength': strength,
-                        'description': f'⚪ مقاومة قوي 4H (قوة: {strength:.2f})',
+                        'description': f'⚪ R4h ({strength:.2f})',
                         'color': 'white',
                         'width': 1 + (strength * 2),
                         'dash': 'dash'
@@ -2555,11 +2725,8 @@ class CryptoAnalyzer:
             return go.Figure()
         
         fig = make_subplots(
-            rows=3, cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.05,
-            row_heights=[0.6, 0.2, 0.2],
-            subplot_titles=("الرسم البياني للسعر - 1 ساعة", "الحجم", "RSI")
+            rows=1, cols=1,
+            subplot_titles=(f"{symbol} - 1h",)
         )
         
         fig.add_trace(go.Candlestick(
@@ -2568,11 +2735,12 @@ class CryptoAnalyzer:
             high=df_1h['high'],
             low=df_1h['low'],
             close=df_1h['close'],
-            name='السعر',
+            name='Price',
             increasing_line_color='#00ff88',
             decreasing_line_color='#ff0066'
         ), row=1, col=1)
         
+        # Blue lines
         if symbol in self.blue_liquidity_lines:
             for line in self.blue_liquidity_lines[symbol]:
                 fig.add_shape(
@@ -2586,10 +2754,8 @@ class CryptoAnalyzer:
                         width=line['width'],
                         dash=line['dash']
                     ),
-                    name=line['description'],
                     row=1, col=1
                 )
-                
                 fig.add_annotation(
                     x=df_1h['timestamp'].iloc[-1],
                     y=line['price'],
@@ -2598,13 +2764,14 @@ class CryptoAnalyzer:
                     arrowhead=1,
                     ax=40,
                     ay=0,
-                    bgcolor='rgba(30, 144, 255, 0.8)',
+                    bgcolor='rgba(30, 144, 255, 0.6)',
                     bordercolor='#1E90FF',
-                    borderwidth=2,
-                    font=dict(color='white', size=10),
+                    borderwidth=1,
+                    font=dict(color='white', size=7),
                     row=1, col=1
                 )
         
+        # White levels
         if symbol in self.white_liquidity_levels:
             for level in self.white_liquidity_levels[symbol]:
                 fig.add_shape(
@@ -2618,10 +2785,8 @@ class CryptoAnalyzer:
                         width=level['width'],
                         dash=level['dash']
                     ),
-                    name=level['description'],
                     row=1, col=1
                 )
-                
                 fig.add_annotation(
                     x=df_1h['timestamp'].iloc[-1],
                     y=level['price'],
@@ -2630,13 +2795,14 @@ class CryptoAnalyzer:
                     arrowhead=1,
                     ax=40,
                     ay=0,
-                    bgcolor='rgba(255, 255, 255, 0.8)',
+                    bgcolor='rgba(255, 255, 255, 0.6)',
                     bordercolor='white',
-                    borderwidth=2,
-                    font=dict(color='black', size=10),
+                    borderwidth=1,
+                    font=dict(color='black', size=7),
                     row=1, col=1
                 )
         
+        # Yellow zones
         if symbol in self.yellow_liquidation_zones:
             for zone in self.yellow_liquidation_zones[symbol]:
                 fig.add_shape(
@@ -2650,10 +2816,8 @@ class CryptoAnalyzer:
                         width=zone['width'],
                         dash=zone['dash']
                     ),
-                    name=zone['description'],
                     row=1, col=1
                 )
-                
                 fig.add_annotation(
                     x=df_1h['timestamp'].iloc[-1],
                     y=zone['price'],
@@ -2662,13 +2826,14 @@ class CryptoAnalyzer:
                     arrowhead=1,
                     ax=40,
                     ay=0,
-                    bgcolor='rgba(255, 255, 0, 0.8)',
+                    bgcolor='rgba(255, 255, 0, 0.6)',
                     bordercolor='#FFFF00',
-                    borderwidth=2,
-                    font=dict(color='black', size=10),
+                    borderwidth=1,
+                    font=dict(color='black', size=7),
                     row=1, col=1
                 )
         
+        # Orange magnetic zones
         if symbol in self.orange_magnetic_zones:
             for zone in self.orange_magnetic_zones[symbol]:
                 fig.add_shape(
@@ -2682,10 +2847,8 @@ class CryptoAnalyzer:
                         width=zone['width'],
                         dash=zone['dash']
                     ),
-                    name=zone['description'],
                     row=1, col=1
                 )
-                
                 fig.add_annotation(
                     x=df_1h['timestamp'].iloc[-1],
                     y=zone['price'],
@@ -2694,67 +2857,22 @@ class CryptoAnalyzer:
                     arrowhead=1,
                     ax=40,
                     ay=0,
-                    bgcolor='rgba(255, 165, 0, 0.8)',
+                    bgcolor='rgba(255, 165, 0, 0.6)',
                     bordercolor='#FFA500',
-                    borderwidth=2,
-                    font=dict(color='white', size=10),
+                    borderwidth=1,
+                    font=dict(color='white', size=7),
                     row=1, col=1
                 )
         
-        fig.add_trace(go.Bar(
-            x=df_1h['timestamp'],
-            y=df_1h['volume'],
-            name='الحجم',
-            marker_color='#7f8c8d',
-            opacity=0.7
-        ), row=2, col=1)
-        
-        if 'RSI' in df_1h.columns:
-            fig.add_trace(go.Scatter(
-                x=df_1h['timestamp'],
-                y=df_1h['RSI'],
-                name='RSI',
-                line=dict(color='#ff00ff', width=1.5)
-            ), row=3, col=1)
-            
-            fig.add_shape(
-                type='rect',
-                x0=df_1h['timestamp'].iloc[0],
-                x1=df_1h['timestamp'].iloc[-1],
-                y0=70,
-                y1=100,
-                fillcolor='rgba(255, 0, 0, 0.2)',
-                line=dict(width=0),
-                row=3, col=1
-            )
-            
-            fig.add_shape(
-                type='rect',
-                x0=df_1h['timestamp'].iloc[0],
-                x1=df_1h['timestamp'].iloc[-1],
-                y0=0,
-                y1=30,
-                fillcolor='rgba(0, 255, 0, 0.2)',
-                line=dict(width=0),
-                row=3, col=1
-            )
-        
         fig.update_layout(
-            title=f"📊 {symbol} - 1 ساعة",
-            height=1000,
-            showlegend=True,
+            title=f"📊 {symbol} - 1 Hour",
+            height=800,
+            showlegend=False,
             hovermode="x unified",
             plot_bgcolor='rgba(10, 10, 30, 0.5)',
             paper_bgcolor='rgba(10, 10, 30, 0.5)',
-            margin=dict(l=20, r=20, t=80, b=20),
-            font=dict(color='#e0f0ff'),
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1
-            )
+            margin=dict(l=20, r=20, t=60, b=20),
+            font=dict(color='#e0f0ff', size=10)
         )
         
         fig.update_xaxes(rangeslider_visible=False, row=1, col=1)
@@ -2765,13 +2883,7 @@ class CryptoAnalyzer:
         if df_15m is None or df_15m.empty:
             return go.Figure()
         
-        fig = make_subplots(
-            rows=3, cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.05,
-            row_heights=[0.6, 0.2, 0.2],
-            subplot_titles=("الرسم البياني للسعر - 15 دقيقة", "الحجم", "RSI")
-        )
+        fig = make_subplots(rows=1, cols=1)
         
         fig.add_trace(go.Candlestick(
             x=df_15m['timestamp'],
@@ -2779,7 +2891,7 @@ class CryptoAnalyzer:
             high=df_15m['high'],
             low=df_15m['low'],
             close=df_15m['close'],
-            name='السعر',
+            name='Price',
             increasing_line_color='#00ff88',
             decreasing_line_color='#ff0066'
         ), row=1, col=1)
@@ -2792,27 +2904,21 @@ class CryptoAnalyzer:
                     x1=df_15m['timestamp'].iloc[-1],
                     y0=line['price'],
                     y1=line['price'],
-                    line=dict(
-                        color=line['color'],
-                        width=line['width'],
-                        dash=line['dash']
-                    ),
-                    name=line['description'],
+                    line=dict(color=line['color'], width=line['width'], dash=line['dash']),
                     row=1, col=1
                 )
-                
                 fig.add_annotation(
                     x=df_15m['timestamp'].iloc[-1],
                     y=line['price'],
                     text=line['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=40,
+                    ax=30,
                     ay=0,
-                    bgcolor='rgba(30, 144, 255, 0.8)',
+                    bgcolor='rgba(30, 144, 255, 0.6)',
                     bordercolor='#1E90FF',
-                    borderwidth=2,
-                    font=dict(color='white', size=10),
+                    borderwidth=1,
+                    font=dict(color='white', size=6),
                     row=1, col=1
                 )
         
@@ -2824,27 +2930,21 @@ class CryptoAnalyzer:
                     x1=df_15m['timestamp'].iloc[-1],
                     y0=level['price'],
                     y1=level['price'],
-                    line=dict(
-                        color=level['color'],
-                        width=level['width'],
-                        dash=level['dash']
-                    ),
-                    name=level['description'],
+                    line=dict(color=level['color'], width=level['width'], dash=level['dash']),
                     row=1, col=1
                 )
-                
                 fig.add_annotation(
                     x=df_15m['timestamp'].iloc[-1],
                     y=level['price'],
                     text=level['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=40,
+                    ax=30,
                     ay=0,
-                    bgcolor='rgba(255, 255, 255, 0.8)',
+                    bgcolor='rgba(255, 255, 255, 0.6)',
                     bordercolor='white',
-                    borderwidth=2,
-                    font=dict(color='black', size=10),
+                    borderwidth=1,
+                    font=dict(color='black', size=6),
                     row=1, col=1
                 )
         
@@ -2856,27 +2956,21 @@ class CryptoAnalyzer:
                     x1=df_15m['timestamp'].iloc[-1],
                     y0=zone['price'],
                     y1=zone['price'],
-                    line=dict(
-                        color=zone['color'],
-                        width=zone['width'],
-                        dash=zone['dash']
-                    ),
-                    name=zone['description'],
+                    line=dict(color=zone['color'], width=zone['width'], dash=zone['dash']),
                     row=1, col=1
                 )
-                
                 fig.add_annotation(
                     x=df_15m['timestamp'].iloc[-1],
                     y=zone['price'],
                     text=zone['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=40,
+                    ax=30,
                     ay=0,
-                    bgcolor='rgba(255, 255, 0, 0.8)',
+                    bgcolor='rgba(255, 255, 0, 0.6)',
                     bordercolor='#FFFF00',
-                    borderwidth=2,
-                    font=dict(color='black', size=10),
+                    borderwidth=1,
+                    font=dict(color='black', size=6),
                     row=1, col=1
                 )
         
@@ -2888,87 +2982,34 @@ class CryptoAnalyzer:
                     x1=df_15m['timestamp'].iloc[-1],
                     y0=zone['price'],
                     y1=zone['price'],
-                    line=dict(
-                        color=zone['color'],
-                        width=zone['width'],
-                        dash=zone['dash']
-                    ),
-                    name=zone['description'],
+                    line=dict(color=zone['color'], width=zone['width'], dash=zone['dash']),
                     row=1, col=1
                 )
-                
                 fig.add_annotation(
                     x=df_15m['timestamp'].iloc[-1],
                     y=zone['price'],
                     text=zone['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=40,
+                    ax=30,
                     ay=0,
-                    bgcolor='rgba(255, 165, 0, 0.8)',
+                    bgcolor='rgba(255, 165, 0, 0.6)',
                     bordercolor='#FFA500',
-                    borderwidth=2,
-                    font=dict(color='white', size=10),
+                    borderwidth=1,
+                    font=dict(color='white', size=6),
                     row=1, col=1
                 )
         
-        fig.add_trace(go.Bar(
-            x=df_15m['timestamp'],
-            y=df_15m['volume'],
-            name='الحجم',
-            marker_color='#7f8c8d',
-            opacity=0.7
-        ), row=2, col=1)
-        
-        if 'RSI' in df_15m.columns:
-            fig.add_trace(go.Scatter(
-                x=df_15m['timestamp'],
-                y=df_15m['RSI'],
-                name='RSI',
-                line=dict(color='#ff00ff', width=1.5)
-            ), row=3, col=1)
-            
-            fig.add_shape(
-                type='rect',
-                x0=df_15m['timestamp'].iloc[0],
-                x1=df_15m['timestamp'].iloc[-1],
-                y0=70,
-                y1=100,
-                fillcolor='rgba(255, 0, 0, 0.2)',
-                line=dict(width=0),
-                row=3, col=1
-            )
-            
-            fig.add_shape(
-                type='rect',
-                x0=df_15m['timestamp'].iloc[0],
-                x1=df_15m['timestamp'].iloc[-1],
-                y0=0,
-                y1=30,
-                fillcolor='rgba(0, 255, 0, 0.2)',
-                line=dict(width=0),
-                row=3, col=1
-            )
-        
         fig.update_layout(
-            title=f"📊 {symbol} - 15 دقيقة",
-            height=1000,
-            showlegend=True,
+            title=f"📊 {symbol} - 15m",
+            height=800,
+            showlegend=False,
             hovermode="x unified",
             plot_bgcolor='rgba(10, 10, 30, 0.5)',
             paper_bgcolor='rgba(10, 10, 30, 0.5)',
-            margin=dict(l=20, r=20, t=80, b=20),
-            font=dict(color='#e0f0ff'),
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1
-            )
+            margin=dict(l=20, r=20, t=60, b=20),
+            font=dict(color='#e0f0ff', size=10)
         )
-        
-        fig.update_xaxes(rangeslider_visible=False, row=1, col=1)
         
         return fig
     
@@ -2976,13 +3017,7 @@ class CryptoAnalyzer:
         if df_5m is None or df_5m.empty:
             return go.Figure()
         
-        fig = make_subplots(
-            rows=3, cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.05,
-            row_heights=[0.6, 0.2, 0.2],
-            subplot_titles=("الرسم البياني للسعر - 5 دقائق", "الحجم", "RSI")
-        )
+        fig = make_subplots(rows=1, cols=1)
         
         fig.add_trace(go.Candlestick(
             x=df_5m['timestamp'],
@@ -2990,7 +3025,7 @@ class CryptoAnalyzer:
             high=df_5m['high'],
             low=df_5m['low'],
             close=df_5m['close'],
-            name='السعر',
+            name='Price',
             increasing_line_color='#00ff88',
             decreasing_line_color='#ff0066'
         ), row=1, col=1)
@@ -3003,27 +3038,21 @@ class CryptoAnalyzer:
                     x1=df_5m['timestamp'].iloc[-1],
                     y0=line['price'],
                     y1=line['price'],
-                    line=dict(
-                        color=line['color'],
-                        width=line['width'],
-                        dash=line['dash']
-                    ),
-                    name=line['description'],
+                    line=dict(color=line['color'], width=line['width'], dash=line['dash']),
                     row=1, col=1
                 )
-                
                 fig.add_annotation(
                     x=df_5m['timestamp'].iloc[-1],
                     y=line['price'],
                     text=line['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=40,
+                    ax=30,
                     ay=0,
-                    bgcolor='rgba(30, 144, 255, 0.8)',
+                    bgcolor='rgba(30, 144, 255, 0.6)',
                     bordercolor='#1E90FF',
-                    borderwidth=2,
-                    font=dict(color='white', size=10),
+                    borderwidth=1,
+                    font=dict(color='white', size=6),
                     row=1, col=1
                 )
         
@@ -3035,27 +3064,21 @@ class CryptoAnalyzer:
                     x1=df_5m['timestamp'].iloc[-1],
                     y0=level['price'],
                     y1=level['price'],
-                    line=dict(
-                        color=level['color'],
-                        width=level['width'],
-                        dash=level['dash']
-                    ),
-                    name=level['description'],
+                    line=dict(color=level['color'], width=level['width'], dash=level['dash']),
                     row=1, col=1
                 )
-                
                 fig.add_annotation(
                     x=df_5m['timestamp'].iloc[-1],
                     y=level['price'],
                     text=level['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=40,
+                    ax=30,
                     ay=0,
-                    bgcolor='rgba(255, 255, 255, 0.8)',
+                    bgcolor='rgba(255, 255, 255, 0.6)',
                     bordercolor='white',
-                    borderwidth=2,
-                    font=dict(color='black', size=10),
+                    borderwidth=1,
+                    font=dict(color='black', size=6),
                     row=1, col=1
                 )
         
@@ -3067,27 +3090,21 @@ class CryptoAnalyzer:
                     x1=df_5m['timestamp'].iloc[-1],
                     y0=zone['price'],
                     y1=zone['price'],
-                    line=dict(
-                        color=zone['color'],
-                        width=zone['width'],
-                        dash=zone['dash']
-                    ),
-                    name=zone['description'],
+                    line=dict(color=zone['color'], width=zone['width'], dash=zone['dash']),
                     row=1, col=1
                 )
-                
                 fig.add_annotation(
                     x=df_5m['timestamp'].iloc[-1],
                     y=zone['price'],
                     text=zone['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=40,
+                    ax=30,
                     ay=0,
-                    bgcolor='rgba(255, 255, 0, 0.8)',
+                    bgcolor='rgba(255, 255, 0, 0.6)',
                     bordercolor='#FFFF00',
-                    borderwidth=2,
-                    font=dict(color='black', size=10),
+                    borderwidth=1,
+                    font=dict(color='black', size=6),
                     row=1, col=1
                 )
         
@@ -3099,87 +3116,34 @@ class CryptoAnalyzer:
                     x1=df_5m['timestamp'].iloc[-1],
                     y0=zone['price'],
                     y1=zone['price'],
-                    line=dict(
-                        color=zone['color'],
-                        width=zone['width'],
-                        dash=zone['dash']
-                    ),
-                    name=zone['description'],
+                    line=dict(color=zone['color'], width=zone['width'], dash=zone['dash']),
                     row=1, col=1
                 )
-                
                 fig.add_annotation(
                     x=df_5m['timestamp'].iloc[-1],
                     y=zone['price'],
                     text=zone['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=40,
+                    ax=30,
                     ay=0,
-                    bgcolor='rgba(255, 165, 0, 0.8)',
+                    bgcolor='rgba(255, 165, 0, 0.6)',
                     bordercolor='#FFA500',
-                    borderwidth=2,
-                    font=dict(color='white', size=10),
+                    borderwidth=1,
+                    font=dict(color='white', size=6),
                     row=1, col=1
                 )
         
-        fig.add_trace(go.Bar(
-            x=df_5m['timestamp'],
-            y=df_5m['volume'],
-            name='الحجم',
-            marker_color='#7f8c8d',
-            opacity=0.7
-        ), row=2, col=1)
-        
-        if 'RSI' in df_5m.columns:
-            fig.add_trace(go.Scatter(
-                x=df_5m['timestamp'],
-                y=df_5m['RSI'],
-                name='RSI',
-                line=dict(color='#ff00ff', width=1.5)
-            ), row=3, col=1)
-            
-            fig.add_shape(
-                type='rect',
-                x0=df_5m['timestamp'].iloc[0],
-                x1=df_5m['timestamp'].iloc[-1],
-                y0=70,
-                y1=100,
-                fillcolor='rgba(255, 0, 0, 0.2)',
-                line=dict(width=0),
-                row=3, col=1
-            )
-            
-            fig.add_shape(
-                type='rect',
-                x0=df_5m['timestamp'].iloc[0],
-                x1=df_5m['timestamp'].iloc[-1],
-                y0=0,
-                y1=30,
-                fillcolor='rgba(0, 255, 0, 0.2)',
-                line=dict(width=0),
-                row=3, col=1
-            )
-        
         fig.update_layout(
-            title=f"📊 {symbol} - 5 دقائق",
-            height=1000,
-            showlegend=True,
+            title=f"📊 {symbol} - 5m",
+            height=800,
+            showlegend=False,
             hovermode="x unified",
             plot_bgcolor='rgba(10, 10, 30, 0.5)',
             paper_bgcolor='rgba(10, 10, 30, 0.5)',
-            margin=dict(l=20, r=20, t=80, b=20),
-            font=dict(color='#e0f0ff'),
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1
-            )
+            margin=dict(l=20, r=20, t=60, b=20),
+            font=dict(color='#e0f0ff', size=10)
         )
-        
-        fig.update_xaxes(rangeslider_visible=False, row=1, col=1)
         
         return fig
     
@@ -3187,13 +3151,7 @@ class CryptoAnalyzer:
         if df_1m is None or df_1m.empty:
             return go.Figure()
         
-        fig = make_subplots(
-            rows=3, cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.05,
-            row_heights=[0.6, 0.2, 0.2],
-            subplot_titles=("الرسم البياني للسعر - 1 دقيقة", "الحجم", "RSI")
-        )
+        fig = make_subplots(rows=1, cols=1)
         
         fig.add_trace(go.Candlestick(
             x=df_1m['timestamp'],
@@ -3201,7 +3159,7 @@ class CryptoAnalyzer:
             high=df_1m['high'],
             low=df_1m['low'],
             close=df_1m['close'],
-            name='السعر',
+            name='Price',
             increasing_line_color='#00ff88',
             decreasing_line_color='#ff0066'
         ), row=1, col=1)
@@ -3214,27 +3172,21 @@ class CryptoAnalyzer:
                     x1=df_1m['timestamp'].iloc[-1],
                     y0=line['price'],
                     y1=line['price'],
-                    line=dict(
-                        color=line['color'],
-                        width=line['width'],
-                        dash=line['dash']
-                    ),
-                    name=line['description'],
+                    line=dict(color=line['color'], width=line['width'], dash=line['dash']),
                     row=1, col=1
                 )
-                
                 fig.add_annotation(
                     x=df_1m['timestamp'].iloc[-1],
                     y=line['price'],
                     text=line['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=40,
+                    ax=20,
                     ay=0,
-                    bgcolor='rgba(30, 144, 255, 0.8)',
+                    bgcolor='rgba(30, 144, 255, 0.5)',
                     bordercolor='#1E90FF',
-                    borderwidth=2,
-                    font=dict(color='white', size=8),
+                    borderwidth=1,
+                    font=dict(color='white', size=5),
                     row=1, col=1
                 )
         
@@ -3246,27 +3198,21 @@ class CryptoAnalyzer:
                     x1=df_1m['timestamp'].iloc[-1],
                     y0=level['price'],
                     y1=level['price'],
-                    line=dict(
-                        color=level['color'],
-                        width=level['width'],
-                        dash=level['dash']
-                    ),
-                    name=level['description'],
+                    line=dict(color=level['color'], width=level['width'], dash=level['dash']),
                     row=1, col=1
                 )
-                
                 fig.add_annotation(
                     x=df_1m['timestamp'].iloc[-1],
                     y=level['price'],
                     text=level['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=40,
+                    ax=20,
                     ay=0,
-                    bgcolor='rgba(255, 255, 255, 0.8)',
+                    bgcolor='rgba(255, 255, 255, 0.5)',
                     bordercolor='white',
-                    borderwidth=2,
-                    font=dict(color='black', size=8),
+                    borderwidth=1,
+                    font=dict(color='black', size=5),
                     row=1, col=1
                 )
         
@@ -3278,27 +3224,21 @@ class CryptoAnalyzer:
                     x1=df_1m['timestamp'].iloc[-1],
                     y0=zone['price'],
                     y1=zone['price'],
-                    line=dict(
-                        color=zone['color'],
-                        width=zone['width'],
-                        dash=zone['dash']
-                    ),
-                    name=zone['description'],
+                    line=dict(color=zone['color'], width=zone['width'], dash=zone['dash']),
                     row=1, col=1
                 )
-                
                 fig.add_annotation(
                     x=df_1m['timestamp'].iloc[-1],
                     y=zone['price'],
                     text=zone['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=40,
+                    ax=20,
                     ay=0,
-                    bgcolor='rgba(255, 255, 0, 0.8)',
+                    bgcolor='rgba(255, 255, 0, 0.5)',
                     bordercolor='#FFFF00',
-                    borderwidth=2,
-                    font=dict(color='black', size=8),
+                    borderwidth=1,
+                    font=dict(color='black', size=5),
                     row=1, col=1
                 )
         
@@ -3310,87 +3250,34 @@ class CryptoAnalyzer:
                     x1=df_1m['timestamp'].iloc[-1],
                     y0=zone['price'],
                     y1=zone['price'],
-                    line=dict(
-                        color=zone['color'],
-                        width=zone['width'],
-                        dash=zone['dash']
-                    ),
-                    name=zone['description'],
+                    line=dict(color=zone['color'], width=zone['width'], dash=zone['dash']),
                     row=1, col=1
                 )
-                
                 fig.add_annotation(
                     x=df_1m['timestamp'].iloc[-1],
                     y=zone['price'],
                     text=zone['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=40,
+                    ax=20,
                     ay=0,
-                    bgcolor='rgba(255, 165, 0, 0.8)',
+                    bgcolor='rgba(255, 165, 0, 0.5)',
                     bordercolor='#FFA500',
-                    borderwidth=2,
-                    font=dict(color='white', size=8),
+                    borderwidth=1,
+                    font=dict(color='white', size=5),
                     row=1, col=1
                 )
         
-        fig.add_trace(go.Bar(
-            x=df_1m['timestamp'],
-            y=df_1m['volume'],
-            name='الحجم',
-            marker_color='#7f8c8d',
-            opacity=0.7
-        ), row=2, col=1)
-        
-        if 'RSI' in df_1m.columns:
-            fig.add_trace(go.Scatter(
-                x=df_1m['timestamp'],
-                y=df_1m['RSI'],
-                name='RSI',
-                line=dict(color='#ff00ff', width=1.2)
-            ), row=3, col=1)
-            
-            fig.add_shape(
-                type='rect',
-                x0=df_1m['timestamp'].iloc[0],
-                x1=df_1m['timestamp'].iloc[-1],
-                y0=70,
-                y1=100,
-                fillcolor='rgba(255, 0, 0, 0.2)',
-                line=dict(width=0),
-                row=3, col=1
-            )
-            
-            fig.add_shape(
-                type='rect',
-                x0=df_1m['timestamp'].iloc[0],
-                x1=df_1m['timestamp'].iloc[-1],
-                y0=0,
-                y1=30,
-                fillcolor='rgba(0, 255, 0, 0.2)',
-                line=dict(width=0),
-                row=3, col=1
-            )
-        
         fig.update_layout(
-            title=f"📊 {symbol} - 1 دقيقة",
-            height=1000,
-            showlegend=True,
+            title=f"📊 {symbol} - 1m",
+            height=800,
+            showlegend=False,
             hovermode="x unified",
             plot_bgcolor='rgba(10, 10, 30, 0.5)',
             paper_bgcolor='rgba(10, 10, 30, 0.5)',
-            margin=dict(l=20, r=20, t=80, b=20),
-            font=dict(color='#e0f0ff', size=10),
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1
-            )
+            margin=dict(l=20, r=20, t=60, b=20),
+            font=dict(color='#e0f0ff', size=8)
         )
-        
-        fig.update_xaxes(rangeslider_visible=False, row=1, col=1)
         
         return fig
     
@@ -3398,13 +3285,7 @@ class CryptoAnalyzer:
         if df_4h is None or df_4h.empty:
             return go.Figure()
         
-        fig = make_subplots(
-            rows=3, cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.05,
-            row_heights=[0.6, 0.2, 0.2],
-            subplot_titles=("الرسم البياني للسعر - 4 ساعات", "الحجم", "RSI")
-        )
+        fig = make_subplots(rows=1, cols=1)
         
         fig.add_trace(go.Candlestick(
             x=df_4h['timestamp'],
@@ -3412,7 +3293,7 @@ class CryptoAnalyzer:
             high=df_4h['high'],
             low=df_4h['low'],
             close=df_4h['close'],
-            name='السعر',
+            name='Price',
             increasing_line_color='#00ff88',
             decreasing_line_color='#ff0066'
         ), row=1, col=1)
@@ -3425,15 +3306,9 @@ class CryptoAnalyzer:
                     x1=df_4h['timestamp'].iloc[-1],
                     y0=line['price'],
                     y1=line['price'],
-                    line=dict(
-                        color=line['color'],
-                        width=line['width'],
-                        dash=line['dash']
-                    ),
-                    name=line['description'],
+                    line=dict(color=line['color'], width=line['width'], dash=line['dash']),
                     row=1, col=1
                 )
-                
                 fig.add_annotation(
                     x=df_4h['timestamp'].iloc[-1],
                     y=line['price'],
@@ -3442,10 +3317,10 @@ class CryptoAnalyzer:
                     arrowhead=1,
                     ax=40,
                     ay=0,
-                    bgcolor='rgba(30, 144, 255, 0.8)',
+                    bgcolor='rgba(30, 144, 255, 0.6)',
                     bordercolor='#1E90FF',
-                    borderwidth=2,
-                    font=dict(color='white', size=10),
+                    borderwidth=1,
+                    font=dict(color='white', size=7),
                     row=1, col=1
                 )
         
@@ -3457,15 +3332,9 @@ class CryptoAnalyzer:
                     x1=df_4h['timestamp'].iloc[-1],
                     y0=level['price'],
                     y1=level['price'],
-                    line=dict(
-                        color=level['color'],
-                        width=level['width'],
-                        dash=level['dash']
-                    ),
-                    name=level['description'],
+                    line=dict(color=level['color'], width=level['width'], dash=level['dash']),
                     row=1, col=1
                 )
-                
                 fig.add_annotation(
                     x=df_4h['timestamp'].iloc[-1],
                     y=level['price'],
@@ -3474,10 +3343,10 @@ class CryptoAnalyzer:
                     arrowhead=1,
                     ax=40,
                     ay=0,
-                    bgcolor='rgba(255, 255, 255, 0.8)',
+                    bgcolor='rgba(255, 255, 255, 0.6)',
                     bordercolor='white',
-                    borderwidth=2,
-                    font=dict(color='black', size=10),
+                    borderwidth=1,
+                    font=dict(color='black', size=7),
                     row=1, col=1
                 )
         
@@ -3489,15 +3358,9 @@ class CryptoAnalyzer:
                     x1=df_4h['timestamp'].iloc[-1],
                     y0=zone['price'],
                     y1=zone['price'],
-                    line=dict(
-                        color=zone['color'],
-                        width=zone['width'],
-                        dash=zone['dash']
-                    ),
-                    name=zone['description'],
+                    line=dict(color=zone['color'], width=zone['width'], dash=zone['dash']),
                     row=1, col=1
                 )
-                
                 fig.add_annotation(
                     x=df_4h['timestamp'].iloc[-1],
                     y=zone['price'],
@@ -3506,10 +3369,10 @@ class CryptoAnalyzer:
                     arrowhead=1,
                     ax=40,
                     ay=0,
-                    bgcolor='rgba(255, 255, 0, 0.8)',
+                    bgcolor='rgba(255, 255, 0, 0.6)',
                     bordercolor='#FFFF00',
-                    borderwidth=2,
-                    font=dict(color='black', size=10),
+                    borderwidth=1,
+                    font=dict(color='black', size=7),
                     row=1, col=1
                 )
         
@@ -3521,15 +3384,9 @@ class CryptoAnalyzer:
                     x1=df_4h['timestamp'].iloc[-1],
                     y0=zone['price'],
                     y1=zone['price'],
-                    line=dict(
-                        color=zone['color'],
-                        width=zone['width'],
-                        dash=zone['dash']
-                    ),
-                    name=zone['description'],
+                    line=dict(color=zone['color'], width=zone['width'], dash=zone['dash']),
                     row=1, col=1
                 )
-                
                 fig.add_annotation(
                     x=df_4h['timestamp'].iloc[-1],
                     y=zone['price'],
@@ -3538,82 +3395,35 @@ class CryptoAnalyzer:
                     arrowhead=1,
                     ax=40,
                     ay=0,
-                    bgcolor='rgba(255, 165, 0, 0.8)',
+                    bgcolor='rgba(255, 165, 0, 0.6)',
                     bordercolor='#FFA500',
-                    borderwidth=2,
-                    font=dict(color='white', size=10),
+                    borderwidth=1,
+                    font=dict(color='white', size=7),
                     row=1, col=1
                 )
         
-        fig.add_trace(go.Bar(
-            x=df_4h['timestamp'],
-            y=df_4h['volume'],
-            name='الحجم',
-            marker_color='#7f8c8d',
-            opacity=0.7
-        ), row=2, col=1)
-        
-        if 'RSI' in df_4h.columns:
-            fig.add_trace(go.Scatter(
-                x=df_4h['timestamp'],
-                y=df_4h['RSI'],
-                name='RSI',
-                line=dict(color='#ff00ff', width=1.5)
-            ), row=3, col=1)
-            
-            fig.add_shape(
-                type='rect',
-                x0=df_4h['timestamp'].iloc[0],
-                x1=df_4h['timestamp'].iloc[-1],
-                y0=70,
-                y1=100,
-                fillcolor='rgba(255, 0, 0, 0.2)',
-                line=dict(width=0),
-                row=3, col=1
-            )
-            
-            fig.add_shape(
-                type='rect',
-                x0=df_4h['timestamp'].iloc[0],
-                x1=df_4h['timestamp'].iloc[-1],
-                y0=0,
-                y1=30,
-                fillcolor='rgba(0, 255, 0, 0.2)',
-                line=dict(width=0),
-                row=3, col=1
-            )
-        
         fig.update_layout(
-            title=f"📊 {symbol} - 4 ساعات",
-            height=1000,
-            showlegend=True,
+            title=f"📊 {symbol} - 4h",
+            height=800,
+            showlegend=False,
             hovermode="x unified",
             plot_bgcolor='rgba(10, 10, 30, 0.5)',
             paper_bgcolor='rgba(10, 10, 30, 0.5)',
-            margin=dict(l=20, r=20, t=80, b=20),
-            font=dict(color='#e0f0ff'),
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1
-            )
+            margin=dict(l=20, r=20, t=60, b=20),
+            font=dict(color='#e0f0ff', size=10)
         )
-        
-        fig.update_xaxes(rangeslider_visible=False, row=1, col=1)
         
         return fig
 
 # ============================================
-# 🔐 صفحات تسجيل الدخول والإدارة
+# 🔐 Login & Admin Pages
 # ============================================
 
 def login_page(user_manager):
     st.markdown("""
     <div style="text-align: center; padding: 30px;">
-        <h1 style="font-size: 3em;">🔐 تسجيل الدخول</h1>
-        <p style="font-size: 1.2em; color: #888;">قم بتسجيل الدخول للوصول إلى منصة التحليل المتقدم</p>
+        <h1 style="font-size: 3em;">🔐 Login</h1>
+        <p style="font-size: 1.2em; color: #888;">Crypto + Forex + Gold Analysis Platform</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -3626,14 +3436,14 @@ def login_page(user_manager):
                         border: 1px solid rgba(255,255,255,0.1);">
             """, unsafe_allow_html=True)
             
-            tab1, tab2 = st.tabs(["🔑 تسجيل الدخول", "📝 إنشاء حساب جديد"])
+            tab1, tab2 = st.tabs(["🔑 Login", "📝 Register"])
             
             with tab1:
                 with st.form("login_form"):
-                    username = st.text_input("👤 اسم المستخدم", placeholder="أدخل اسم المستخدم")
-                    password = st.text_input("🔒 كلمة المرور", type="password", placeholder="أدخل كلمة المرور")
+                    username = st.text_input("👤 Username", placeholder="Enter username")
+                    password = st.text_input("🔒 Password", type="password", placeholder="Enter password")
                     
-                    submit_login = st.form_submit_button("🚀 تسجيل الدخول", use_container_width=True)
+                    submit_login = st.form_submit_button("🚀 Login", use_container_width=True)
                     
                     if submit_login:
                         if username and password:
@@ -3647,44 +3457,44 @@ def login_page(user_manager):
                             else:
                                 st.error(message)
                         else:
-                            st.warning("⚠️ الرجاء إدخال اسم المستخدم وكلمة المرور")
+                            st.warning("⚠️ Please enter username and password")
             
             with tab2:
                 with st.form("register_form"):
-                    new_username = st.text_input("👤 اسم المستخدم", placeholder="اختر اسم مستخدم (3 أحرف على الأقل)")
-                    new_password = st.text_input("🔒 كلمة المرور", type="password", placeholder="اختر كلمة مرور (4 أحرف على الأقل)")
-                    new_email = st.text_input("📧 البريد الإلكتروني (اختياري)", placeholder="example@email.com")
+                    new_username = st.text_input("👤 Username", placeholder="Choose username (min 3 chars)")
+                    new_password = st.text_input("🔒 Password", type="password", placeholder="Choose password (min 4 chars)")
+                    new_email = st.text_input("📧 Email (optional)", placeholder="example@email.com")
                     
-                    submit_register = st.form_submit_button("📝 إنشاء حساب", use_container_width=True)
+                    submit_register = st.form_submit_button("📝 Create Account", use_container_width=True)
                     
                     if submit_register:
                         if new_username and new_password:
                             success, message = user_manager.register_user(new_username, new_password, new_email)
                             if success:
                                 st.success(message)
-                                st.info("📝 سيتم تفعيل حسابك بعد الدفع عبر تلغرام")
+                                st.info("📝 Wait for admin activation")
                             else:
                                 st.error(message)
                         else:
-                            st.warning("⚠️ الرجاء إدخال اسم المستخدم وكلمة المرور")
+                            st.warning("⚠️ Please enter username and password")
             
             st.markdown("</div>", unsafe_allow_html=True)
     
-    with st.expander("ℹ️ معلومات الدفع"):
+    with st.expander("ℹ️ Subscription Info"):
         st.info("""
-        **💰 طريقة الاشتراك:**
-        1. أنشئ حساباً على المنصة
-        2. تواصل معي على تلغرام: [@SOFIAN232](https://t.me/SOFIAN232)
-        3. أرسل مبلغ 99$ (شهرياً)
-        4. أرسل اسم المستخدم الخاص بك
-        5. سيتم تفعيل حسابك خلال 24 ساعة
+        **💰 Subscription Details:**
+        1. Create an account on the platform
+        2. Contact me on Telegram: [@SOFIAN232](https://t.me/SOFIAN232)
+        3. Send $99 (monthly)
+        4. Send your username
+        5. Account will be activated within 24 hours
         
-        **💎 مميزات الاشتراك:**
-        - شموع 5 أطر زمنية
-        - خطوط سيولة زرقاء
-        - مستويات قوية بيضاء
-        - مناطق تصفية صفراء
-        - مناطق جذب برتقالية
+        **💎 Features:**
+        - 5 Timeframes (1m, 5m, 15m, 1h, 4h)
+        - Blue Liquidity Lines
+        - White Strong Levels
+        - Yellow Liquidation Zones
+        - Orange Magnetic Zones
         """)
 
 
@@ -3692,8 +3502,8 @@ def admin_panel(user_manager):
     st.markdown("""
     <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
                 padding: 20px; border-radius: 10px; margin-bottom: 20px;">
-        <h2 style="color: white; text-align: center;">🛡️ لوحة تحكم المسؤول</h2>
-        <p style="color: #e0f0ff; text-align: center;">إدارة المستخدمين والتفعيل</p>
+        <h2 style="color: white; text-align: center;">🛡️ Admin Panel</h2>
+        <p style="color: #e0f0ff; text-align: center;">User Management & Activation</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -3701,16 +3511,15 @@ def admin_panel(user_manager):
     
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("👥 إجمالي المستخدمين", total)
+        st.metric("👥 Total Users", total)
     with col2:
-        st.metric("🟢 نشطين", active)
+        st.metric("🟢 Active", active)
     with col3:
-        st.metric("🟡 في انتظار التفعيل", pending)
+        st.metric("🟡 Pending", pending)
     with col4:
-        st.metric("👑 مسؤولين", admin_count)
+        st.metric("👑 Admins", admin_count)
     
-    # 📋 المستخدمين المنتظرين
-    st.markdown("### 🟡 المستخدمين المنتظرين للتفعيل")
+    st.markdown("### 🟡 Pending Users")
     
     pending_users = user_manager.get_pending_users()
     
@@ -3719,13 +3528,13 @@ def admin_panel(user_manager):
             col1, col2, col3 = st.columns([2, 2, 1])
             with col1:
                 st.write(f"**👤 {username}**")
-                st.caption(f"📧 {data.get('email', 'لا يوجد')}")
-                st.caption(f"📅 سجل: {data.get('created_at', '')[:16] if data.get('created_at') else ''}")
+                st.caption(f"📧 {data.get('email', 'None')}")
+                st.caption(f"📅 {data.get('created_at', '')[:16] if data.get('created_at') else ''}")
             with col2:
-                st.write("💰 **في انتظار الدفع**")
-                st.caption("⏳ ينتظر التفعيل")
+                st.write("💰 **Pending Payment**")
+                st.caption("⏳ Awaiting activation")
             with col3:
-                if st.button(f"✅ تفعيل {username}", key=f"activate_{username}"):
+                if st.button(f"✅ Activate {username}", key=f"activate_{username}"):
                     success, message = user_manager.activate_user(username)
                     if success:
                         st.success(message)
@@ -3733,10 +3542,9 @@ def admin_panel(user_manager):
                     else:
                         st.error(message)
     else:
-        st.info("✅ لا يوجد مستخدمين في انتظار التفعيل")
+        st.info("✅ No pending users")
     
-    # 📋 المستخدمين النشطين
-    st.markdown("### 🟢 المستخدمين النشطين")
+    st.markdown("### 🟢 Active Users")
     
     active_users = user_manager.get_active_users()
     
@@ -3745,13 +3553,13 @@ def admin_panel(user_manager):
             col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
             with col1:
                 st.write(f"**👤 {username}**")
-                st.caption(f"📧 {data.get('email', 'لا يوجد')}")
+                st.caption(f"📧 {data.get('email', 'None')}")
             with col2:
-                st.write("✅ **مفعل**")
+                st.write("✅ **Active**")
                 if data.get('expiry_date'):
-                    st.caption(f"📅 ينتهي: {data['expiry_date'][:10]}")
+                    st.caption(f"📅 Expires: {data['expiry_date'][:10]}")
             with col3:
-                if st.button(f"🔴 تعطيل {username}", key=f"deactivate_{username}"):
+                if st.button(f"🔴 Deactivate {username}", key=f"deactivate_{username}"):
                     success, message = user_manager.deactivate_user(username)
                     if success:
                         st.success(message)
@@ -3759,7 +3567,7 @@ def admin_panel(user_manager):
                     else:
                         st.error(message)
             with col4:
-                if st.button(f"📅 تمديد {username}", key=f"extend_{username}"):
+                if st.button(f"📅 Extend {username}", key=f"extend_{username}"):
                     success, message = user_manager.extend_subscription(username, 30)
                     if success:
                         st.success(message)
@@ -3767,21 +3575,20 @@ def admin_panel(user_manager):
                     else:
                         st.error(message)
     
-    # 📋 جميع المستخدمين
-    with st.expander("📋 عرض جميع المستخدمين"):
+    with st.expander("📋 All Users"):
         all_users = user_manager.get_all_users()
         users_data = []
         for username, data in all_users.items():
-            status = "🟢 نشط" if data.get('active', False) else "🟡 في انتظار التفعيل"
+            status = "🟢 Active" if data.get('active', False) else "🟡 Pending"
             if data.get('is_admin', False):
-                status = "👑 مسؤول"
+                status = "👑 Admin"
             
             users_data.append({
-                "اسم المستخدم": username,
-                "الحالة": status,
-                "البريد": data.get('email', '-'),
-                "تاريخ التسجيل": data.get('created_at', '-')[:16] if data.get('created_at') else '-',
-                "تاريخ الدفع": data.get('payment_date', '-')[:16] if data.get('payment_date') else '-'
+                "Username": username,
+                "Status": status,
+                "Email": data.get('email', '-'),
+                "Joined": data.get('created_at', '-')[:16] if data.get('created_at') else '-',
+                "Payment": data.get('payment_date', '-')[:16] if data.get('payment_date') else '-'
             })
         
         if users_data:
@@ -3793,8 +3600,8 @@ def payment_page(user_manager):
     st.markdown("""
     <div style="text-align: center; padding: 30px; background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
                 border-radius: 15px; margin-bottom: 30px;">
-        <h1 style="color: white;">💎 تفعيل الحساب</h1>
-        <p style="color: #e0f0ff;">للوصول إلى جميع ميزات المنصة، يرجى تفعيل حسابك</p>
+        <h1 style="color: white;">💎 Activate Account</h1>
+        <p style="color: #e0f0ff;">Get access to all platform features</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -3804,14 +3611,14 @@ def payment_page(user_manager):
         st.markdown("""
         <div style="background: rgba(30, 60, 114, 0.3); padding: 20px; border-radius: 10px;
                     border: 2px solid #00ff88;">
-            <h3 style="color: #00ff88;">📋 مميزات الاشتراك</h3>
+            <h3 style="color: #00ff88;">📋 Features</h3>
             <ul style="color: #e0f0ff;">
-                <li>📊 شموع 5 أطر زمنية</li>
-                <li>🔵 خطوط سيولة زرقاء</li>
-                <li>⚪ مستويات قوية بيضاء</li>
-                <li>🟡 مناطق تصفية صفراء</li>
-                <li>🟠 مناطق جذب برتقالية</li>
-                <li>📈 تحديثات لحظية</li>
+                <li>📊 5 Timeframes</li>
+                <li>🔵 Blue Liquidity Lines</li>
+                <li>⚪ Strong White Levels</li>
+                <li>🟡 Liquidation Zones</li>
+                <li>🟠 Magnetic Zones</li>
+                <li>📈 Live Updates</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -3819,27 +3626,27 @@ def payment_page(user_manager):
     with col2:
         st.markdown("""
         <div style="background: rgba(30, 60, 114, 0.3); padding: 20px; border-radius: 10px;">
-            <h3 style="color: #ffaa00;">💰 طريقة الدفع</h3>
+            <h3 style="color: #ffaa00;">💰 Payment Method</h3>
             <p style="color: #e0f0ff;">
-                1️⃣ تواصل معي على تلغرام:<br>
+                1️⃣ Contact me on Telegram:<br>
                 <a href="https://t.me/SOFIAN232" target="_blank" 
                    style="color: #00ff88; font-size: 1.2em;">
                     @SOFIAN232
                 </a>
             </p>
             <p style="color: #e0f0ff;">
-                2️⃣ أرسل مبلغ الاشتراك:<br>
-                <span style="color: #ffaa00; font-size: 1.5em;">💵 99$</span>
-                <span style="color: #888;">(شهرياً)</span>
+                2️⃣ Send subscription fee:<br>
+                <span style="color: #ffaa00; font-size: 1.5em;">💵 $99</span>
+                <span style="color: #888;">(monthly)</span>
             </p>
             <p style="color: #e0f0ff;">
-                3️⃣ أرسل لي اسم المستخدم الخاص بك:<br>
+                3️⃣ Send your username:<br>
                 <span style="color: #00ff88;">📝 username: {your_username}</span>
             </p>
             <div style="background: rgba(255, 165, 0, 0.1); padding: 15px; border-radius: 10px;
                         border: 1px solid #ffaa00; margin-top: 15px;">
                 <p style="color: #ffaa00; text-align: center;">
-                    ⏳ بعد الدفع، سيتم تفعيل حسابك خلال 24 ساعة
+                    ⏳ Account will be activated within 24 hours after payment
                 </p>
             </div>
         </div>
@@ -3851,40 +3658,48 @@ def payment_page(user_manager):
             
             if user_data:
                 if user_data.get('payment_status') == 'pending':
-                    st.warning("⏳ حسابك في انتظار التفعيل من قبل المسؤول")
+                    st.warning("⏳ Your account is pending activation")
                 elif user_data.get('payment_status') == 'paid':
-                    st.success("✅ حسابك مفعل! يمكنك استخدام جميع الميزات")
+                    st.success("✅ Your account is active!")
                     if user_data.get('expiry_date'):
-                        st.info(f"📅 تنتهي الصلاحية: {user_data['expiry_date'][:10]}")
+                        st.info(f"📅 Expires: {user_data['expiry_date'][:10]}")
 
 
 def analysis_interface():
     st.markdown("""
     <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); 
                 border-radius: 15px; margin-bottom: 30px;">
-        <h1 style="color: white;">🧠 محلل السيولة المتقدم</h1>
-        <p style="color: #e0f0ff;">شموع + خطوط سيولة + مناطق تصفية + جذب مغناطيسي</p>
+        <h1 style="color: white;">🧠 Advanced Liquidity Analyzer</h1>
+        <p style="color: #e0f0ff;">Candles + Liquidity + Liquidation + Magnetic Zones</p>
     </div>
     """, unsafe_allow_html=True)
     
     analyzer = CryptoAnalyzer()
     
+    # Examples
+    st.markdown("""
+    **📌 Symbol Examples:**
+    - **Crypto:** BTC/USDT, ETH/USDT, SOL/USDT
+    - **Gold:** XAUUSD, XAU/USD, GOLD
+    - **Forex:** EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD, NZDUSD
+    """)
+    
     col1, col2 = st.columns([3, 1])
     
     with col1:
-        symbol = st.text_input("💰 أدخل زوج العملات:", "BTC/USDT").upper()
+        symbol = st.text_input("💰 Enter Symbol:", "BTC/USDT").upper()
     
     with col2:
         st.write("")
-        if st.button("🚀 تحليل", type="primary", use_container_width=True):
+        if st.button("🚀 Analyze", type="primary", use_container_width=True):
             if check_rate_limit():
                 st.session_state['run_analysis'] = True
     
     if st.session_state.get('run_analysis', False):
         st.session_state['run_analysis'] = False
         
-        with st.spinner(f"🔄 جاري تحليل {symbol}..."):
-            # جلب جميع الأطر الزمنية
+        with st.spinner(f"🔄 Analyzing {symbol}..."):
+            # Fetch all timeframes
             df_1h, df_4h = analyzer.fetch_data(symbol)
             df_15m = analyzer.fetch_data_15m(symbol)
             df_5m = analyzer.fetch_data_5m(symbol)
@@ -3898,34 +3713,47 @@ def analysis_interface():
                 '1m': df_1m
             }
             
-            # إنشاء التبويبات
-            tabs = st.tabs(["⏰ 4 ساعات", "📈 1 ساعة", "⏱️ 15 دقيقة", "⏱️ 5 دقائق", "⏱️ 1 دقيقة"])
+            # Check if any data was fetched
+            has_data = any(df is not None and not df.empty for df in timeframes.values())
             
-            for tab, (tf, df) in zip(tabs, timeframes.items()):
-                with tab:
+            if has_data:
+                # Display current price if available
+                for tf, df in timeframes.items():
                     if df is not None and not df.empty:
-                        if tf == '4h':
-                            fig = analyzer.create_4h_chart(df, symbol)
-                        elif tf == '1h':
-                            fig = analyzer.create_main_chart(df, symbol)
-                        elif tf == '15m':
-                            fig = analyzer.create_15m_chart(df, symbol)
-                        elif tf == '5m':
-                            fig = analyzer.create_5m_chart(df, symbol)
-                        elif tf == '1m':
-                            fig = analyzer.create_1m_chart(df, symbol)
-                        
-                        st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        st.error(f"❌ لا توجد بيانات لـ {tf}")
+                        current_price = df['close'].iloc[-1]
+                        st.metric("💰 Current Price", f"{current_price:.2f}")
+                        break
+                
+                # Create tabs
+                tabs = st.tabs(["⏰ 4 Hours", "📈 1 Hour", "⏱️ 15 Min", "⏱️ 5 Min", "⏱️ 1 Min"])
+                
+                for tab, (tf, df) in zip(tabs, timeframes.items()):
+                    with tab:
+                        if df is not None and not df.empty:
+                            if tf == '4h':
+                                fig = analyzer.create_4h_chart(df, symbol)
+                            elif tf == '1h':
+                                fig = analyzer.create_main_chart(df, symbol)
+                            elif tf == '15m':
+                                fig = analyzer.create_15m_chart(df, symbol)
+                            elif tf == '5m':
+                                fig = analyzer.create_5m_chart(df, symbol)
+                            elif tf == '1m':
+                                fig = analyzer.create_1m_chart(df, symbol)
+                            
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.error(f"❌ No data for {tf}")
+            else:
+                st.error(f"❌ No data available for {symbol}. Please check the symbol and try again.")
 
 
 # ============================================
-# 🚀 الدالة الرئيسية
+# 🚀 Main Function
 # ============================================
 
 def main():
-    # تهيئة session state
+    # Initialize session state
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
     if 'username' not in st.session_state:
@@ -3935,10 +3763,10 @@ def main():
     if 'run_analysis' not in st.session_state:
         st.session_state['run_analysis'] = False
     
-    # إنشاء مدير المستخدمين
+    # Create user manager
     user_manager = UserManager()
     
-    # إذا لم يكن مسجل الدخول
+    # If not logged in
     if not st.session_state['logged_in']:
         login_page(user_manager)
         return
@@ -3946,41 +3774,41 @@ def main():
     username = st.session_state['username']
     is_admin = st.session_state['is_admin']
     
-    # التحقق من صلاحية المستخدم
+    # Check user permission
     if not is_admin:
         user_data = user_manager.get_user_data(username)
         if not user_data or not user_data.get('active', False):
             payment_page(user_manager)
             return
     
-    # الشريط الجانبي
+    # Sidebar
     with st.sidebar:
         st.markdown("""
         <div style="text-align: center; padding: 10px;">
-            <h2>🧠 المحلل المتقدم</h2>
+            <h2>🧠 Analyzer</h2>
             <hr>
         </div>
         """, unsafe_allow_html=True)
         
         st.markdown(f"""
         <div style="background: rgba(30, 60, 114, 0.3); padding: 15px; border-radius: 10px; margin-bottom: 20px;">
-            <p>👤 **المستخدم:** {username}</p>
-            <p>🔑 **الصلاحية:** {"👑 مسؤول" if is_admin else "👤 مستخدم"}</p>
+            <p>👤 **User:** {username}</p>
+            <p>🔑 **Role:** {"👑 Admin" if is_admin else "👤 User"}</p>
         </div>
         """, unsafe_allow_html=True)
         
-        if st.button("🚪 تسجيل الخروج", use_container_width=True):
+        if st.button("🚪 Logout", use_container_width=True):
             st.session_state['logged_in'] = False
             st.session_state['username'] = None
             st.session_state['is_admin'] = False
             st.rerun()
         
         st.markdown("<hr>", unsafe_allow_html=True)
-        st.markdown("### 📊 القائمة")
+        st.markdown("### 📊 Menu")
     
-    # عرض المحتوى
+    # Display content
     if is_admin:
-        tab_admin, tab_analysis = st.tabs(["🛡️ لوحة تحكم المسؤول", "📊 التحليل"])
+        tab_admin, tab_analysis = st.tabs(["🛡️ Admin Panel", "📊 Analysis"])
         with tab_admin:
             admin_panel(user_manager)
         with tab_analysis:
