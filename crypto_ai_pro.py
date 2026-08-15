@@ -27,6 +27,11 @@ CACHE_DURATION_ANALYSIS = 600
 RATE_LIMIT_SECONDS = 3
 MAX_CANDLES = 500
 
+# ✅ بيانات المسؤول
+ADMIN_USERNAME = "adminSO"
+ADMIN_PASSWORD = "admin25SO"
+SUBSCRIPTION_PRICE = "99$"
+
 @st.cache_resource
 def get_exchange():
     return ccxt.binance({
@@ -94,7 +99,22 @@ class UserManager:
     def __init__(self, users_file="users.json"):
         self.users_file = users_file
         self.users = self._load_users()
-        self.admin_password = "admin123"
+        
+        # ✅ إنشاء حساب adminSO مفعل تلقائياً إذا لم يكن موجوداً
+        if "adminSO" not in self.users:
+            self.users["adminSO"] = {
+                "password": self._hash_password("admin25SO"),
+                "email": "",
+                "active": True,  # ✅ مفعل تلقائياً
+                "created_at": datetime.now().isoformat(),
+                "last_login": None,
+                "is_admin": True,  # ✅ مسؤول
+                "payment_status": "paid",
+                "payment_date": datetime.now().isoformat(),
+                "expiry_date": (datetime.now() + timedelta(days=365)).isoformat()
+            }
+            self._save_users()
+            print("✅ تم إنشاء حساب المسؤول adminSO تلقائياً!")
         
     def _load_users(self):
         if os.path.exists(self.users_file):
@@ -131,10 +151,6 @@ class UserManager:
             "payment_date": None,
             "expiry_date": None
         }
-        
-        if len(self.users) == 1:
-            self.users[username]["is_admin"] = True
-            self.users[username]["active"] = True
         
         self._save_users()
         return True, "✅ تم التسجيل بنجاح! انتظر تفعيل حسابك من قبل المسؤول."
@@ -381,7 +397,6 @@ class CryptoAnalyzer:
                 self.calculate_yellow_liquidation_zones_4h(df_4h, symbol)
                 self.calculate_orange_magnetic_zones_4h(df_4h, current_price_4h, symbol)
                 
-                # مناطق التصفية من كاشف التصفية
                 liquidation_zones_4h = self.liquidation_detector.detect_liquidation_zones(df_4h, timeframe='4h')
                 if liquidation_zones_4h:
                     if symbol not in self.yellow_liquidation_zones_4h:
@@ -3374,7 +3389,7 @@ def payment_page():
             </p>
             <p style="color: #e0f0ff;">
                 2️⃣ أرسل مبلغ الاشتراك:<br>
-                <span style="color: #ffaa00; font-size: 1.5em;">💵 10$</span>
+                <span style="color: #ffaa00; font-size: 1.5em;">💵 99$</span>
                 <span style="color: #888;">(شهرياً)</span>
             </p>
             <p style="color: #e0f0ff;">
@@ -3474,7 +3489,7 @@ def login_page(user_manager):
         **💰 طريقة الاشتراك:**
         1. أنشئ حساباً على المنصة
         2. تواصل معي على تلغرام: [@SOFIAN232](https://t.me/SOFIAN232)
-        3. أرسل مبلغ 10$ (شهرياً)
+        3. أرسل مبلغ 99$ (شهرياً)
         4. أرسل اسم المستخدم الخاص بك
         5. سيتم تفعيل حسابك خلال 24 ساعة
         
