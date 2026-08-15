@@ -3282,7 +3282,7 @@ def admin_panel(user_manager):
     with col4:
         st.metric("👑 Admins", admin_count)
     
-    st.markdown("### 🟡 Pending Users")
+    st.markdown("### 🟡 Pending Users (Waiting for Activation)")
     pending_users = user_manager.get_pending_users()
     
     if pending_users:
@@ -3360,7 +3360,7 @@ def admin_panel(user_manager):
                 elif data.get('active', False):
                     st.write("🟢 Active")
                 else:
-                    st.write("🟡 Pending")
+                    st.write("🔴 Inactive")
             with col3:
                 st.write(data.get('email', '-'))
             with col4:
@@ -3370,7 +3370,7 @@ def admin_panel(user_manager):
                         expiry_date = datetime.fromisoformat(expiry)
                         days_left = (expiry_date - datetime.now()).days
                         if days_left > 0:
-                            st.write(f"{expiry[:10]} ({days_left}d)")
+                            st.write(f"{expiry[:10]} ({days_left}d left)")
                         else:
                             st.write(f"⚠️ {expiry[:10]} (Expired)")
                     except:
@@ -3464,19 +3464,19 @@ def payment_page(user_manager):
     </div>
     """, unsafe_allow_html=True)
     
-    st.info("""
+    st.info(f"""
     **💰 Subscription Details:**
-    1. Contact me on Telegram: [@SOFIAN232](https://t.me/SOFIAN232)
-    2. Send $99 (monthly)
+    1. Contact admin on Telegram: [@SOFIAN232](https://t.me/SOFIAN232)
+    2. Send **{SUBSCRIPTION_PRICE}** (monthly subscription)
     3. Send your username
     4. Account activated within 24 hours
     
     **💎 Features:**
-    - 5 Timeframes
-    - Blue Liquidity Lines
-    - White Strong Levels
-    - Yellow Liquidation Zones
-    - Orange Magnetic Zones
+    - 5 Timeframes (1m, 5m, 15m, 1h, 4h)
+    - 🔵 Blue Liquidity Lines
+    - ⚪ White Strong Support/Resistance
+    - 🟡 Yellow Liquidation Zones
+    - 🧲 Orange Magnetic Zones
     """)
 
 def analysis_interface():
@@ -3566,6 +3566,7 @@ def main():
     username = st.session_state['username']
     is_admin = st.session_state['is_admin']
     
+    # إذا كان المستخدم ليس مديراً، نتحقق من تفعيل حسابه
     if not is_admin:
         user_data = user_manager.get_user_data(username)
         if not user_data or not user_data.get('active', False):
