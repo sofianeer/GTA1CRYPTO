@@ -25,31 +25,69 @@ MAX_CANDLES = 500
 
 ADMIN_USERNAME = "adminSO"
 ADMIN_PASSWORD = "admin25SO"
+SUBSCRIPTION_PRICE = "99$"
 
 # ============================================
-# 🏦 OKX Exchange
+# 🏦 OKX Exchange (Spot + Futures)
 # ============================================
 
 @st.cache_resource
-def get_exchange():
+def get_exchange_spot():
+    """OKX Spot - للبيانات الفورية"""
     try:
         exchange = ccxt.okx({
             'rateLimit': 3000,
             'enableRateLimit': True,
+            'options': {
+                'defaultType': 'spot',  # السوق الفوري
+            }
         })
         exchange.fetch_ohlcv('BTC/USDT', '1h', limit=1)
         return exchange
     except Exception as e:
-        st.error(f"❌ OKX error: {str(e)}")
+        st.error(f"❌ OKX Spot error: {str(e)}")
+        return None
+
+@st.cache_resource
+def get_exchange_future():
+    """OKX Futures - للعقود الآجلة (Perpetual Swaps)"""
+    try:
+        exchange = ccxt.okx({
+            'rateLimit': 3000,
+            'enableRateLimit': True,
+            'options': {
+                'defaultType': 'swap',  # العقود الدائمة (Perpetual)
+            }
+        })
+        exchange.fetch_ohlcv('BTC/USDT:USDT', '1h', limit=1)
+        return exchange
+    except Exception as e:
+        st.error(f"❌ OKX Futures error: {str(e)}")
         return None
 
 # ============================================
-# 📊 Data Fetcher
+# 📊 Data Fetcher (Spot + Futures)
 # ============================================
 
 @st.cache_data(ttl=CACHE_DURATION_DATA)
-def fetch_candles_cached(symbol, timeframe='1h', limit=500):
-    exchange = get_exchange()
+def fetch_candles_cached(symbol, timeframe='1h', limit=500, market='spot'):
+    """
+    جلب البيانات من OKX
+    - market='spot' → السوق الفوري
+    - market='future' → العقود الآجلة (Perpetual)
+    """
+    
+    # اختيار السوق
+    if market == 'future':
+        exchange = get_exchange_future()
+        # صيغة الرمز للفيوتشر: BTC/USDT:USDT
+        if '/' not in symbol:
+            symbol = f"{symbol}/USDT:USDT"
+    else:
+        exchange = get_exchange_spot()
+        if '/' not in symbol:
+            symbol = f"{symbol}/USDT"
+    
     if not exchange:
         return None
     
@@ -59,7 +97,7 @@ def fetch_candles_cached(symbol, timeframe='1h', limit=500):
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         return df
     except Exception as e:
-        st.error(f"❌ Failed to fetch {symbol}: {str(e)}")
+        st.error(f"❌ Failed to fetch {symbol} ({market}): {str(e)}")
         return None
 
 @st.cache_data(ttl=CACHE_DURATION_ANALYSIS)
@@ -103,7 +141,7 @@ def check_rate_limit():
     return True
 
 # ============================================
-# 🗄️ User Management
+# 🗄️ User Management (نفس الكود السابق)
 # ============================================
 
 class UserManager:
@@ -505,12 +543,13 @@ class LiquidationZonesDetector:
         return clustered_zones
 
 # ============================================
-# 📊 Main Analyzer Class
+# 📊 Main Analyzer Class (Spot + Futures)
 # ============================================
 
 class CryptoAnalyzer:
     def __init__(self):
-        self.exchange = get_exchange()
+        self.spot_exchange = get_exchange_spot()
+        self.future_exchange = get_exchange_future()
         self.blue_liquidity_lines = {}
         self.white_liquidity_levels = {}
         self.yellow_liquidation_zones = {}
@@ -533,10 +572,11 @@ class CryptoAnalyzer:
         self.orange_magnetic_zones_4h = {}
         self.liquidation_detector = LiquidationZonesDetector()
     
-    def fetch_data(self, symbol):
+    def fetch_data(self, symbol, market='spot'):
+        """جلب بيانات 1h و 4h"""
         try:
-            df_1h = fetch_candles_cached(symbol, '1h', MAX_CANDLES)
-            df_4h = fetch_candles_cached(symbol, '4h', MAX_CANDLES // 2)
+            df_1h = fetch_candles_cached(symbol, '1h', MAX_CANDLES, market)
+            df_4h = fetch_candles_cached(symbol, '4h', MAX_CANDLES // 2, market)
             
             if df_1h is not None:
                 df_1h = calculate_indicators_cached(df_1h)
@@ -573,9 +613,9 @@ class CryptoAnalyzer:
             st.error(f"Error fetching {symbol}: {str(e)}")
             return None, None
     
-    def fetch_data_15m(self, symbol):
+    def fetch_data_15m(self, symbol, market='spot'):
         try:
-            df_15m = fetch_candles_cached(symbol, '15m', MAX_CANDLES)
+            df_15m = fetch_candles_cached(symbol, '15m', MAX_CANDLES, market)
             
             if df_15m is not None:
                 df_15m = self.calculate_indicators_15m(df_15m)
@@ -603,9 +643,9 @@ class CryptoAnalyzer:
             st.error(f"Error fetching 15m for {symbol}: {str(e)}")
             return None
     
-    def fetch_data_5m(self, symbol):
+    def fetch_data_5m(self, symbol, market='spot'):
         try:
-            df_5m = fetch_candles_cached(symbol, '5m', MAX_CANDLES)
+            df_5m = fetch_candles_cached(symbol, '5m', MAX_CANDLES, market)
             
             if df_5m is not None:
                 df_5m = self.calculate_indicators_5m(df_5m)
@@ -633,9 +673,9 @@ class CryptoAnalyzer:
             st.error(f"Error fetching 5m for {symbol}: {str(e)}")
             return None
     
-    def fetch_data_1m(self, symbol):
+    def fetch_data_1m(self, symbol, market='spot'):
         try:
-            df_1m = fetch_candles_cached(symbol, '1m', MAX_CANDLES)
+            df_1m = fetch_candles_cached(symbol, '1m', MAX_CANDLES, market)
             
             if df_1m is not None:
                 df_1m = self.calculate_indicators_1m(df_1m)
@@ -2462,7 +2502,6 @@ class CryptoAnalyzer:
             decreasing_line_color='#ff0066'
         ), row=1, col=1)
         
-        # Blue lines
         if symbol in self.blue_liquidity_lines:
             for line in self.blue_liquidity_lines[symbol]:
                 fig.add_shape(
@@ -2489,7 +2528,6 @@ class CryptoAnalyzer:
                     row=1, col=1
                 )
         
-        # White levels
         if symbol in self.white_liquidity_levels:
             for level in self.white_liquidity_levels[symbol]:
                 fig.add_shape(
@@ -2516,7 +2554,6 @@ class CryptoAnalyzer:
                     row=1, col=1
                 )
         
-        # Yellow zones
         if symbol in self.yellow_liquidation_zones:
             for zone in self.yellow_liquidation_zones[symbol]:
                 fig.add_shape(
@@ -2543,7 +2580,6 @@ class CryptoAnalyzer:
                     row=1, col=1
                 )
         
-        # Orange magnetic zones
         if symbol in self.orange_magnetic_zones:
             for zone in self.orange_magnetic_zones[symbol]:
                 fig.add_shape(
@@ -3255,6 +3291,7 @@ def payment_page(user_manager):
     - White Strong Levels
     - Yellow Liquidation Zones
     - Orange Magnetic Zones
+    - Spot + Futures (Swap)
     """)
 
 def analysis_interface():
@@ -3262,31 +3299,38 @@ def analysis_interface():
     <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); 
                 border-radius: 15px; margin-bottom: 30px;">
         <h1 style="color: white;">🧠 Advanced Liquidity Analyzer</h1>
-        <p style="color: #e0f0ff;">Candles + Liquidity + Liquidation + Magnetic Zones</p>
+        <p style="color: #e0f0ff;">Spot + Futures | Candles + Liquidity + Liquidation + Magnetic Zones</p>
     </div>
     """, unsafe_allow_html=True)
     
     analyzer = CryptoAnalyzer()
     
-    col1, col2 = st.columns([3, 1])
+    col1, col2, col3 = st.columns([2, 1, 1])
     
     with col1:
         symbol = st.text_input("💰 Enter Symbol:", "BTC/USDT").upper()
     
     with col2:
+        market = st.selectbox("📊 Market:", ["spot", "future"])
+    
+    with col3:
         st.write("")
         if st.button("🚀 Analyze", type="primary", use_container_width=True):
             if check_rate_limit():
                 st.session_state['run_analysis'] = True
+                st.session_state['symbol'] = symbol
+                st.session_state['market'] = market
     
     if st.session_state.get('run_analysis', False):
         st.session_state['run_analysis'] = False
+        symbol = st.session_state.get('symbol', 'BTC/USDT')
+        market = st.session_state.get('market', 'spot')
         
-        with st.spinner(f"🔄 Analyzing {symbol}..."):
-            df_1h, df_4h = analyzer.fetch_data(symbol)
-            df_15m = analyzer.fetch_data_15m(symbol)
-            df_5m = analyzer.fetch_data_5m(symbol)
-            df_1m = analyzer.fetch_data_1m(symbol)
+        with st.spinner(f"🔄 Analyzing {symbol} ({market})..."):
+            df_1h, df_4h = analyzer.fetch_data(symbol, market)
+            df_15m = analyzer.fetch_data_15m(symbol, market)
+            df_5m = analyzer.fetch_data_5m(symbol, market)
+            df_1m = analyzer.fetch_data_1m(symbol, market)
             
             timeframes = {
                 '4h': df_4h,
@@ -3316,10 +3360,13 @@ def analysis_interface():
                                 fig = analyzer.create_1m_chart(df, symbol)
                             
                             st.plotly_chart(fig, use_container_width=True)
+                            
+                            # معلومات إضافية
+                            st.caption(f"📊 {tf} | {len(df)} candles | Last price: ${df['close'].iloc[-1]:.2f}")
                         else:
                             st.error(f"❌ No data for {tf}")
             else:
-                st.error(f"❌ No data available for {symbol}")
+                st.error(f"❌ No data available for {symbol} ({market})")
 
 # ============================================
 # 🚀 Main
@@ -3334,6 +3381,10 @@ def main():
         st.session_state['is_admin'] = False
     if 'run_analysis' not in st.session_state:
         st.session_state['run_analysis'] = False
+    if 'symbol' not in st.session_state:
+        st.session_state['symbol'] = 'BTC/USDT'
+    if 'market' not in st.session_state:
+        st.session_state['market'] = 'spot'
     
     user_manager = UserManager()
     
