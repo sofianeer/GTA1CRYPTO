@@ -17,12 +17,10 @@ import json
 from collections import defaultdict
 import sqlite3
 import warnings
-import yfinance as yf
-import requests
 warnings.filterwarnings('ignore')
 
 # ============================================
-# 🔧 Performance Settings
+# 🔧 Settings
 # ============================================
 
 CACHE_DURATION_DATA = 300
@@ -30,19 +28,12 @@ CACHE_DURATION_ANALYSIS = 600
 RATE_LIMIT_SECONDS = 3
 MAX_CANDLES = 500
 
-# Admin credentials
 ADMIN_USERNAME = "adminSO"
 ADMIN_PASSWORD = "admin25SO"
 SUBSCRIPTION_PRICE = "99$"
 
-# Forex symbols
-FOREX_SYMBOLS = ['XAUUSD', 'XAU/USD', 'GOLD', 'GC=F',
-                'EURUSD', 'EUR/USD', 'GBPUSD', 'GBP/USD',
-                'USDJPY', 'USD/JPY', 'AUDUSD', 'AUD/USD',
-                'USDCAD', 'USD/CAD', 'NZDUSD', 'NZD/USD']
-
 # ============================================
-# 📊 Exchange Manager (KuCoin + Forex)
+# 🏦 KuCoin Exchange
 # ============================================
 
 @st.cache_resource
@@ -57,166 +48,18 @@ def get_exchange():
                 'adjustForTimeDifference': True,
             }
         })
-        # Test connection
         exchange.fetch_ohlcv('BTC/USDT', '1h', limit=1)
         return exchange
     except Exception as e:
-        st.error(f"❌ KuCoin connection failed: {str(e)}")
+        st.error(f"❌ KuCoin error: {str(e)}")
         return None
-
-class ForexDataManager:
-    """Forex & Gold data from multiple sources"""
-    
-    @staticmethod
-    def fetch_forex_data(symbol, timeframe='1h', limit=500):
-        """Fetch forex/gold data from multiple sources"""
-        
-        # Try Yahoo Finance first
-        df = ForexDataManager._fetch_yfinance(symbol, timeframe, limit)
-        if df is not None:
-            return df
-        
-        # Try OANDA API (requires API key)
-        df = ForexDataManager._fetch_oanda(symbol, timeframe, limit)
-        if df is not None:
-            return df
-        
-        return None
-    
-    @staticmethod
-    def _fetch_yfinance(symbol, timeframe='1h', limit=500):
-        """Fetch from Yahoo Finance"""
-        try:
-            ticker_map = {
-                'XAUUSD': 'XAUUSD=X',
-                'XAU/USD': 'XAUUSD=X',
-                'GOLD': 'GC=F',
-                'XAUUSD=X': 'XAUUSD=X',
-                'GC=F': 'GC=F',
-                'EURUSD': 'EURUSD=X',
-                'EUR/USD': 'EURUSD=X',
-                'GBPUSD': 'GBPUSD=X',
-                'GBP/USD': 'GBPUSD=X',
-                'USDJPY': 'USDJPY=X',
-                'USD/JPY': 'USDJPY=X',
-                'AUDUSD': 'AUDUSD=X',
-                'AUD/USD': 'AUDUSD=X',
-                'USDCAD': 'USDCAD=X',
-                'USD/CAD': 'USDCAD=X',
-                'NZDUSD': 'NZDUSD=X',
-                'NZD/USD': 'NZDUSD=X',
-            }
-            
-            ticker = ticker_map.get(symbol, symbol)
-            
-            # Map timeframe to yfinance interval
-            interval_map = {
-                '1m': '1m', '2m': '2m', '5m': '5m', '15m': '15m',
-                '30m': '30m', '1h': '60m', '4h': '1h', 
-                '1d': '1d', '1w': '1wk'
-            }
-            interval = interval_map.get(timeframe, '60m')
-            
-            # Calculate period based on limit
-            period_map = {
-                100: '5d', 200: '1mo', 500: '2mo', 
-                1000: '6mo', 2000: '1y', 5000: '2y'
-            }
-            period = period_map.get(limit, '2mo')
-            
-            data = yf.download(ticker, period=period, interval=interval, progress=False)
-            
-            if data.empty:
-                return None
-            
-            df = data.reset_index()
-            df.columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
-            
-            # Add volume if missing
-            if 'volume' not in df.columns:
-                df['volume'] = 0
-            
-            return df
-            
-        except Exception as e:
-            return None
-    
-    @staticmethod
-    def _fetch_oanda(symbol, timeframe='1h', limit=500):
-        """Fetch from OANDA API (requires API key)"""
-        try:
-            # OANDA API key from environment or session
-            api_key = os.environ.get('OANDA_API_KEY', '')
-            account_id = os.environ.get('OANDA_ACCOUNT_ID', '')
-            
-            if not api_key or not account_id:
-                return None
-            
-            # Map symbol to OANDA format
-            oanda_symbol = symbol.replace('/', '_').replace('USD', 'USD')
-            
-            # Map timeframe
-            granularity_map = {
-                '1m': 'M1', '5m': 'M5', '15m': 'M15', '30m': 'M30',
-                '1h': 'H1', '4h': 'H4', '1d': 'D', '1w': 'W'
-            }
-            granularity = granularity_map.get(timeframe, 'H1')
-            
-            url = f"https://api-fxtrade.oanda.com/v3/instruments/{oanda_symbol}/candles"
-            headers = {
-                'Authorization': f'Bearer {api_key}',
-                'Accept-Datetime-Format': 'RFC3339'
-            }
-            params = {
-                'granularity': granularity,
-                'count': limit,
-                'price': 'M'
-            }
-            
-            response = requests.get(url, headers=headers, params=params, timeout=10)
-            
-            if response.status_code != 200:
-                return None
-            
-            data = response.json()
-            
-            if 'candles' not in data:
-                return None
-            
-            candles = []
-            for candle in data['candles']:
-                candles.append({
-                    'timestamp': candle['time'],
-                    'open': float(candle['mid']['o']),
-                    'high': float(candle['mid']['h']),
-                    'low': float(candle['mid']['l']),
-                    'close': float(candle['mid']['c']),
-                    'volume': candle.get('volume', 0)
-                })
-            
-            df = pd.DataFrame(candles)
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
-            
-            return df
-            
-        except Exception as e:
-            return None
 
 # ============================================
-# 🏦 Main Data Fetcher
+# 📊 Data Fetcher
 # ============================================
 
 @st.cache_data(ttl=CACHE_DURATION_DATA)
 def fetch_candles_cached(symbol, timeframe='1h', limit=500):
-    """Fetch data from appropriate source"""
-    
-    # Check if forex symbol
-    if symbol in FOREX_SYMBOLS:
-        df = ForexDataManager.fetch_forex_data(symbol, timeframe, limit)
-        if df is not None and not df.empty:
-            return df
-    
-    # If not forex, use KuCoin for crypto
     exchange = get_exchange()
     if not exchange:
         return None
@@ -271,7 +114,7 @@ def check_rate_limit():
     return True
 
 # ============================================
-# 🗄️ User Management System
+# 🗄️ User Management
 # ============================================
 
 class UserManager:
@@ -284,7 +127,6 @@ class UserManager:
         try:
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
-            
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     username TEXT PRIMARY KEY,
@@ -299,18 +141,15 @@ class UserManager:
                     expiry_date TEXT
                 )
             ''')
-            
             conn.commit()
             conn.close()
-            
         except Exception as e:
-            print(f"❌ DB init error: {e}")
+            print(f"❌ DB error: {e}")
     
     def _ensure_admin(self):
         try:
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
-            
             cursor.execute("SELECT * FROM users WHERE username=?", (ADMIN_USERNAME,))
             if not cursor.fetchone():
                 cursor.execute('''
@@ -329,11 +168,9 @@ class UserManager:
                     (datetime.now() + timedelta(days=365)).isoformat()
                 ))
                 conn.commit()
-            
             conn.close()
-            
         except Exception as e:
-            print(f"❌ Admin check error: {e}")
+            print(f"❌ Admin error: {e}")
     
     def _hash_password(self, password):
         return hashlib.sha256(password.encode()).hexdigest()
@@ -347,7 +184,6 @@ class UserManager:
         try:
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
-            
             cursor.execute("SELECT * FROM users WHERE username=?", (username,))
             if cursor.fetchone():
                 conn.close()
@@ -366,19 +202,16 @@ class UserManager:
                 0,
                 "pending"
             ))
-            
             conn.commit()
             conn.close()
             return True, "✅ Registration successful! Wait for admin activation."
-            
         except Exception as e:
-            return False, f"❌ Registration error: {str(e)}"
+            return False, f"❌ Error: {str(e)}"
     
     def login_user(self, username, password):
         try:
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
-            
             cursor.execute("SELECT * FROM users WHERE username=?", (username,))
             user = cursor.fetchone()
             
@@ -388,7 +221,7 @@ class UserManager:
             
             if user[3] == 0:
                 conn.close()
-                return False, "⛔ Account not activated! Please contact admin."
+                return False, "⛔ Account not activated! Contact admin."
             
             if user[1] != self._hash_password(password):
                 conn.close()
@@ -398,11 +231,9 @@ class UserManager:
                          (datetime.now().isoformat(), username))
             conn.commit()
             conn.close()
-            
             return True, "✅ Login successful!"
-            
         except Exception as e:
-            return False, f"❌ Login error: {str(e)}"
+            return False, f"❌ Error: {str(e)}"
     
     def activate_user(self, username):
         if username == ADMIN_USERNAME:
@@ -411,7 +242,6 @@ class UserManager:
         try:
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
-            
             cursor.execute("SELECT * FROM users WHERE username=?", (username,))
             if not cursor.fetchone():
                 conn.close()
@@ -423,11 +253,9 @@ class UserManager:
                 SET active=1, payment_status='paid', payment_date=?, expiry_date=?
                 WHERE username=?
             ''', (datetime.now().isoformat(), expiry.isoformat(), username))
-            
             conn.commit()
             conn.close()
             return True, f"✅ Account {username} activated!"
-            
         except Exception as e:
             return False, f"❌ Error: {str(e)}"
     
@@ -438,67 +266,14 @@ class UserManager:
         try:
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
-            
             cursor.execute('''
                 UPDATE users 
                 SET active=0, payment_status='expired'
                 WHERE username=?
             ''', (username,))
-            
             conn.commit()
             conn.close()
             return True, f"✅ Account {username} deactivated!"
-            
-        except Exception as e:
-            return False, f"❌ Error: {str(e)}"
-    
-    def delete_user(self, username):
-        if username == ADMIN_USERNAME:
-            conn = sqlite3.connect(self.db_file)
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin=1")
-            admin_count = cursor.fetchone()[0]
-            conn.close()
-            
-            if admin_count <= 1:
-                return False, "❌ Cannot delete the only admin!"
-        
-        try:
-            conn = sqlite3.connect(self.db_file)
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM users WHERE username=?", (username,))
-            conn.commit()
-            conn.close()
-            return True, "✅ User deleted!"
-            
-        except Exception as e:
-            return False, f"❌ Error: {str(e)}"
-    
-    def make_admin(self, username):
-        if username == ADMIN_USERNAME:
-            return False, "❌ This is the main admin account!"
-        
-        try:
-            conn = sqlite3.connect(self.db_file)
-            cursor = conn.cursor()
-            cursor.execute("UPDATE users SET is_admin=1 WHERE username=?", (username,))
-            conn.commit()
-            conn.close()
-            return True, f"✅ {username} promoted to admin!"
-        except Exception as e:
-            return False, f"❌ Error: {str(e)}"
-    
-    def remove_admin(self, username):
-        if username == ADMIN_USERNAME:
-            return False, "❌ Cannot remove main admin permissions!"
-        
-        try:
-            conn = sqlite3.connect(self.db_file)
-            cursor = conn.cursor()
-            cursor.execute("UPDATE users SET is_admin=0 WHERE username=?", (username,))
-            conn.commit()
-            conn.close()
-            return True, f"✅ Admin permissions removed from {username}"
         except Exception as e:
             return False, f"❌ Error: {str(e)}"
     
@@ -506,7 +281,6 @@ class UserManager:
         try:
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
-            
             cursor.execute("SELECT expiry_date FROM users WHERE username=?", (username,))
             result = cursor.fetchone()
             
@@ -521,7 +295,6 @@ class UserManager:
                 SET expiry_date=?, payment_status='paid', active=1
                 WHERE username=?
             ''', (new_expiry.isoformat(), username))
-            
             conn.commit()
             conn.close()
             return True, f"✅ Subscription extended for {username} (+{days} days)"
@@ -539,39 +312,11 @@ class UserManager:
             ''')
             users = cursor.fetchall()
             conn.close()
-            
             result = {}
             for user in users:
-                result[user[0]] = {
-                    "email": user[1],
-                    "created_at": user[2]
-                }
+                result[user[0]] = {"email": user[1], "created_at": user[2]}
             return result
-            
-        except Exception as e:
-            return {}
-    
-    def get_active_users(self):
-        try:
-            conn = sqlite3.connect(self.db_file)
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT username, email, expiry_date 
-                FROM users 
-                WHERE active=1 AND is_admin=0
-            ''')
-            users = cursor.fetchall()
-            conn.close()
-            
-            result = {}
-            for user in users:
-                result[user[0]] = {
-                    "email": user[1],
-                    "expiry_date": user[2]
-                }
-            return result
-            
-        except Exception as e:
+        except:
             return {}
     
     def get_all_users(self):
@@ -584,7 +329,6 @@ class UserManager:
             ''')
             users = cursor.fetchall()
             conn.close()
-            
             result = {}
             for user in users:
                 result[user[0]] = {
@@ -598,8 +342,7 @@ class UserManager:
                     "expiry_date": user[8]
                 }
             return result
-            
-        except Exception as e:
+        except:
             return {}
     
     def is_admin(self, username):
@@ -623,7 +366,6 @@ class UserManager:
             ''', (username,))
             user = cursor.fetchone()
             conn.close()
-            
             if user:
                 return {
                     "username": user[0],
@@ -637,24 +379,20 @@ class UserManager:
                     "expiry_date": user[8]
                 }
             return None
-            
-        except Exception as e:
+        except:
             return None
     
     def get_users_count(self):
         try:
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
-            
             total = cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0]
             active = cursor.execute("SELECT COUNT(*) FROM users WHERE active=1").fetchone()[0]
             pending = cursor.execute("SELECT COUNT(*) FROM users WHERE active=0 AND is_admin=0").fetchone()[0]
             admin = cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin=1").fetchone()[0]
-            
             conn.close()
             return total, active, pending, admin
-            
-        except Exception as e:
+        except:
             return 0, 0, 0, 0
 
 # ============================================
@@ -685,51 +423,52 @@ class LiquidationZonesDetector:
             avg_volume = df['volume'].iloc[max(0, i-20):i].mean()
             volume_ratio = current['volume'] / avg_volume if avg_volume > 0 else 1
             
-            if (current['volume'] > avg_volume * 2 and
-                lower_wick > candle_range * 0.4 and
-                current['close'] > current['open'] and
-                current['low'] < prev['low'] and
-                next_candle['close'] > current['high']):
+            if candle_range > 0:
+                if (current['volume'] > avg_volume * 2 and
+                    lower_wick > candle_range * 0.4 and
+                    current['close'] > current['open'] and
+                    current['low'] < prev['low'] and
+                    next_candle['close'] > current['high']):
+                    
+                    confirmed = next_next['close'] > next_candle['high']
+                    
+                    zone = {
+                        'price': current['low'],
+                        'timestamp': current.name if hasattr(current, 'name') else i,
+                        'type': 'bullish',
+                        'strength': volume_ratio,
+                        'confirmed': confirmed,
+                        'wick_ratio': lower_wick / candle_range if candle_range > 0 else 0,
+                        'volume_ratio': volume_ratio,
+                        'cluster_size': 1,
+                        'timeframe': timeframe,
+                        'color': 'rgba(255, 255, 0, 0.3)',
+                        'description': '🟢 B-Liq'
+                    }
+                    zones.append(zone)
                 
-                confirmed = next_next['close'] > next_candle['high']
-                
-                zone = {
-                    'price': current['low'],
-                    'timestamp': current.name if hasattr(current, 'name') else i,
-                    'type': 'bullish',
-                    'strength': volume_ratio,
-                    'confirmed': confirmed,
-                    'wick_ratio': lower_wick / candle_range if candle_range > 0 else 0,
-                    'volume_ratio': volume_ratio,
-                    'cluster_size': 1,
-                    'timeframe': timeframe,
-                    'color': 'rgba(255, 255, 0, 0.3)',
-                    'description': '🟢 Bullish Liquidation'
-                }
-                zones.append(zone)
-            
-            elif (current['volume'] > avg_volume * 2 and
-                  upper_wick > candle_range * 0.4 and
-                  current['close'] < current['open'] and
-                  current['high'] > prev['high'] and
-                  next_candle['close'] < current['low']):
-                
-                confirmed = next_next['close'] < next_candle['low']
-                
-                zone = {
-                    'price': current['high'],
-                    'timestamp': current.name if hasattr(current, 'name') else i,
-                    'type': 'bearish',
-                    'strength': volume_ratio,
-                    'confirmed': confirmed,
-                    'wick_ratio': upper_wick / candle_range if candle_range > 0 else 0,
-                    'volume_ratio': volume_ratio,
-                    'cluster_size': 1,
-                    'timeframe': timeframe,
-                    'color': 'rgba(255, 255, 0, 0.3)',
-                    'description': '🔴 Bearish Liquidation'
-                }
-                zones.append(zone)
+                elif (current['volume'] > avg_volume * 2 and
+                      upper_wick > candle_range * 0.4 and
+                      current['close'] < current['open'] and
+                      current['high'] > prev['high'] and
+                      next_candle['close'] < current['low']):
+                    
+                    confirmed = next_next['close'] < next_candle['low']
+                    
+                    zone = {
+                        'price': current['high'],
+                        'timestamp': current.name if hasattr(current, 'name') else i,
+                        'type': 'bearish',
+                        'strength': volume_ratio,
+                        'confirmed': confirmed,
+                        'wick_ratio': upper_wick / candle_range if candle_range > 0 else 0,
+                        'volume_ratio': volume_ratio,
+                        'cluster_size': 1,
+                        'timeframe': timeframe,
+                        'color': 'rgba(255, 255, 0, 0.3)',
+                        'description': '🔴 S-Liq'
+                    }
+                    zones.append(zone)
         
         zones = self._cluster_zones(zones, df)
         zones.sort(key=lambda x: x['strength'], reverse=True)
@@ -770,14 +509,14 @@ class LiquidationZonesDetector:
                     'cluster_size': len(cluster_zones),
                     'timeframe': cluster_zones[0]['timeframe'],
                     'color': 'rgba(255, 255, 0, 0.3)',
-                    'description': f"{cluster_zones[0]['description']} (x{len(cluster_zones)})"
+                    'description': f"{cluster_zones[0]['description']} x{len(cluster_zones)}"
                 }
                 clustered_zones.append(merged_zone)
         
         return clustered_zones
 
 # ============================================
-# 📊 Main Analysis Class
+# 📊 Main Analyzer Class
 # ============================================
 
 class CryptoAnalyzer:
@@ -804,9 +543,6 @@ class CryptoAnalyzer:
         self.orange_magnetic_zones_1m = {}
         self.orange_magnetic_zones_4h = {}
         self.liquidation_detector = LiquidationZonesDetector()
-    
-    def is_forex(self, symbol):
-        return symbol in FOREX_SYMBOLS
     
     def fetch_data(self, symbol):
         try:
@@ -2724,10 +2460,7 @@ class CryptoAnalyzer:
         if df_1h is None or df_1h.empty:
             return go.Figure()
         
-        fig = make_subplots(
-            rows=1, cols=1,
-            subplot_titles=(f"{symbol} - 1h",)
-        )
+        fig = make_subplots(rows=1, cols=1)
         
         fig.add_trace(go.Candlestick(
             x=df_1h['timestamp'],
@@ -2749,11 +2482,7 @@ class CryptoAnalyzer:
                     x1=df_1h['timestamp'].iloc[-1],
                     y0=line['price'],
                     y1=line['price'],
-                    line=dict(
-                        color=line['color'],
-                        width=line['width'],
-                        dash=line['dash']
-                    ),
+                    line=dict(color=line['color'], width=line['width'], dash=line['dash']),
                     row=1, col=1
                 )
                 fig.add_annotation(
@@ -2762,7 +2491,7 @@ class CryptoAnalyzer:
                     text=line['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=40,
+                    ax=35,
                     ay=0,
                     bgcolor='rgba(30, 144, 255, 0.6)',
                     bordercolor='#1E90FF',
@@ -2780,11 +2509,7 @@ class CryptoAnalyzer:
                     x1=df_1h['timestamp'].iloc[-1],
                     y0=level['price'],
                     y1=level['price'],
-                    line=dict(
-                        color=level['color'],
-                        width=level['width'],
-                        dash=level['dash']
-                    ),
+                    line=dict(color=level['color'], width=level['width'], dash=level['dash']),
                     row=1, col=1
                 )
                 fig.add_annotation(
@@ -2793,7 +2518,7 @@ class CryptoAnalyzer:
                     text=level['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=40,
+                    ax=35,
                     ay=0,
                     bgcolor='rgba(255, 255, 255, 0.6)',
                     bordercolor='white',
@@ -2811,11 +2536,7 @@ class CryptoAnalyzer:
                     x1=df_1h['timestamp'].iloc[-1],
                     y0=zone['price'],
                     y1=zone['price'],
-                    line=dict(
-                        color=zone['color'],
-                        width=zone['width'],
-                        dash=zone['dash']
-                    ),
+                    line=dict(color=zone['color'], width=zone['width'], dash=zone['dash']),
                     row=1, col=1
                 )
                 fig.add_annotation(
@@ -2824,7 +2545,7 @@ class CryptoAnalyzer:
                     text=zone['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=40,
+                    ax=35,
                     ay=0,
                     bgcolor='rgba(255, 255, 0, 0.6)',
                     bordercolor='#FFFF00',
@@ -2842,11 +2563,7 @@ class CryptoAnalyzer:
                     x1=df_1h['timestamp'].iloc[-1],
                     y0=zone['price'],
                     y1=zone['price'],
-                    line=dict(
-                        color=zone['color'],
-                        width=zone['width'],
-                        dash=zone['dash']
-                    ),
+                    line=dict(color=zone['color'], width=zone['width'], dash=zone['dash']),
                     row=1, col=1
                 )
                 fig.add_annotation(
@@ -2855,7 +2572,7 @@ class CryptoAnalyzer:
                     text=zone['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=40,
+                    ax=35,
                     ay=0,
                     bgcolor='rgba(255, 165, 0, 0.6)',
                     bordercolor='#FFA500',
@@ -2865,7 +2582,7 @@ class CryptoAnalyzer:
                 )
         
         fig.update_layout(
-            title=f"📊 {symbol} - 1 Hour",
+            title=f"📊 {symbol} - 1h",
             height=800,
             showlegend=False,
             hovermode="x unified",
@@ -2913,9 +2630,9 @@ class CryptoAnalyzer:
                     text=line['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=30,
+                    ax=25,
                     ay=0,
-                    bgcolor='rgba(30, 144, 255, 0.6)',
+                    bgcolor='rgba(30, 144, 255, 0.5)',
                     bordercolor='#1E90FF',
                     borderwidth=1,
                     font=dict(color='white', size=6),
@@ -2939,9 +2656,9 @@ class CryptoAnalyzer:
                     text=level['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=30,
+                    ax=25,
                     ay=0,
-                    bgcolor='rgba(255, 255, 255, 0.6)',
+                    bgcolor='rgba(255, 255, 255, 0.5)',
                     bordercolor='white',
                     borderwidth=1,
                     font=dict(color='black', size=6),
@@ -2965,9 +2682,9 @@ class CryptoAnalyzer:
                     text=zone['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=30,
+                    ax=25,
                     ay=0,
-                    bgcolor='rgba(255, 255, 0, 0.6)',
+                    bgcolor='rgba(255, 255, 0, 0.5)',
                     bordercolor='#FFFF00',
                     borderwidth=1,
                     font=dict(color='black', size=6),
@@ -2991,9 +2708,9 @@ class CryptoAnalyzer:
                     text=zone['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=30,
+                    ax=25,
                     ay=0,
-                    bgcolor='rgba(255, 165, 0, 0.6)',
+                    bgcolor='rgba(255, 165, 0, 0.5)',
                     bordercolor='#FFA500',
                     borderwidth=1,
                     font=dict(color='white', size=6),
@@ -3047,9 +2764,9 @@ class CryptoAnalyzer:
                     text=line['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=30,
+                    ax=20,
                     ay=0,
-                    bgcolor='rgba(30, 144, 255, 0.6)',
+                    bgcolor='rgba(30, 144, 255, 0.5)',
                     bordercolor='#1E90FF',
                     borderwidth=1,
                     font=dict(color='white', size=6),
@@ -3073,9 +2790,9 @@ class CryptoAnalyzer:
                     text=level['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=30,
+                    ax=20,
                     ay=0,
-                    bgcolor='rgba(255, 255, 255, 0.6)',
+                    bgcolor='rgba(255, 255, 255, 0.5)',
                     bordercolor='white',
                     borderwidth=1,
                     font=dict(color='black', size=6),
@@ -3099,9 +2816,9 @@ class CryptoAnalyzer:
                     text=zone['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=30,
+                    ax=20,
                     ay=0,
-                    bgcolor='rgba(255, 255, 0, 0.6)',
+                    bgcolor='rgba(255, 255, 0, 0.5)',
                     bordercolor='#FFFF00',
                     borderwidth=1,
                     font=dict(color='black', size=6),
@@ -3125,9 +2842,9 @@ class CryptoAnalyzer:
                     text=zone['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=30,
+                    ax=20,
                     ay=0,
-                    bgcolor='rgba(255, 165, 0, 0.6)',
+                    bgcolor='rgba(255, 165, 0, 0.5)',
                     bordercolor='#FFA500',
                     borderwidth=1,
                     font=dict(color='white', size=6),
@@ -3181,7 +2898,7 @@ class CryptoAnalyzer:
                     text=line['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=20,
+                    ax=15,
                     ay=0,
                     bgcolor='rgba(30, 144, 255, 0.5)',
                     bordercolor='#1E90FF',
@@ -3207,7 +2924,7 @@ class CryptoAnalyzer:
                     text=level['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=20,
+                    ax=15,
                     ay=0,
                     bgcolor='rgba(255, 255, 255, 0.5)',
                     bordercolor='white',
@@ -3233,7 +2950,7 @@ class CryptoAnalyzer:
                     text=zone['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=20,
+                    ax=15,
                     ay=0,
                     bgcolor='rgba(255, 255, 0, 0.5)',
                     bordercolor='#FFFF00',
@@ -3259,7 +2976,7 @@ class CryptoAnalyzer:
                     text=zone['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=20,
+                    ax=15,
                     ay=0,
                     bgcolor='rgba(255, 165, 0, 0.5)',
                     bordercolor='#FFA500',
@@ -3315,7 +3032,7 @@ class CryptoAnalyzer:
                     text=line['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=40,
+                    ax=35,
                     ay=0,
                     bgcolor='rgba(30, 144, 255, 0.6)',
                     bordercolor='#1E90FF',
@@ -3341,7 +3058,7 @@ class CryptoAnalyzer:
                     text=level['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=40,
+                    ax=35,
                     ay=0,
                     bgcolor='rgba(255, 255, 255, 0.6)',
                     bordercolor='white',
@@ -3367,7 +3084,7 @@ class CryptoAnalyzer:
                     text=zone['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=40,
+                    ax=35,
                     ay=0,
                     bgcolor='rgba(255, 255, 0, 0.6)',
                     bordercolor='#FFFF00',
@@ -3393,7 +3110,7 @@ class CryptoAnalyzer:
                     text=zone['description'],
                     showarrow=True,
                     arrowhead=1,
-                    ax=40,
+                    ax=35,
                     ay=0,
                     bgcolor='rgba(255, 165, 0, 0.6)',
                     bordercolor='#FFA500',
@@ -3416,94 +3133,63 @@ class CryptoAnalyzer:
         return fig
 
 # ============================================
-# 🔐 Login & Admin Pages
+# 🔐 Pages
 # ============================================
 
 def login_page(user_manager):
     st.markdown("""
     <div style="text-align: center; padding: 30px;">
         <h1 style="font-size: 3em;">🔐 Login</h1>
-        <p style="font-size: 1.2em; color: #888;">Crypto + Forex + Gold Analysis Platform</p>
+        <p style="font-size: 1.2em; color: #888;">Advanced Liquidity Analysis Platform</p>
     </div>
     """, unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
-        with st.container():
-            st.markdown("""
-            <div style="background: rgba(30, 60, 114, 0.3); padding: 30px; border-radius: 15px; 
-                        border: 1px solid rgba(255,255,255,0.1);">
-            """, unsafe_allow_html=True)
-            
-            tab1, tab2 = st.tabs(["🔑 Login", "📝 Register"])
-            
-            with tab1:
-                with st.form("login_form"):
-                    username = st.text_input("👤 Username", placeholder="Enter username")
-                    password = st.text_input("🔒 Password", type="password", placeholder="Enter password")
-                    
-                    submit_login = st.form_submit_button("🚀 Login", use_container_width=True)
-                    
-                    if submit_login:
-                        if username and password:
-                            success, message = user_manager.login_user(username, password)
-                            if success:
-                                st.session_state['logged_in'] = True
-                                st.session_state['username'] = username
-                                st.session_state['is_admin'] = user_manager.is_admin(username)
-                                st.success(message)
-                                st.rerun()
-                            else:
-                                st.error(message)
-                        else:
-                            st.warning("⚠️ Please enter username and password")
-            
-            with tab2:
-                with st.form("register_form"):
-                    new_username = st.text_input("👤 Username", placeholder="Choose username (min 3 chars)")
-                    new_password = st.text_input("🔒 Password", type="password", placeholder="Choose password (min 4 chars)")
-                    new_email = st.text_input("📧 Email (optional)", placeholder="example@email.com")
-                    
-                    submit_register = st.form_submit_button("📝 Create Account", use_container_width=True)
-                    
-                    if submit_register:
-                        if new_username and new_password:
-                            success, message = user_manager.register_user(new_username, new_password, new_email)
-                            if success:
-                                st.success(message)
-                                st.info("📝 Wait for admin activation")
-                            else:
-                                st.error(message)
-                        else:
-                            st.warning("⚠️ Please enter username and password")
-            
-            st.markdown("</div>", unsafe_allow_html=True)
-    
-    with st.expander("ℹ️ Subscription Info"):
-        st.info("""
-        **💰 Subscription Details:**
-        1. Create an account on the platform
-        2. Contact me on Telegram: [@SOFIAN232](https://t.me/SOFIAN232)
-        3. Send $99 (monthly)
-        4. Send your username
-        5. Account will be activated within 24 hours
+        tab1, tab2 = st.tabs(["🔑 Login", "📝 Register"])
         
-        **💎 Features:**
-        - 5 Timeframes (1m, 5m, 15m, 1h, 4h)
-        - Blue Liquidity Lines
-        - White Strong Levels
-        - Yellow Liquidation Zones
-        - Orange Magnetic Zones
-        """)
-
+        with tab1:
+            with st.form("login_form"):
+                username = st.text_input("👤 Username")
+                password = st.text_input("🔒 Password", type="password")
+                
+                if st.form_submit_button("🚀 Login", use_container_width=True):
+                    if username and password:
+                        success, message = user_manager.login_user(username, password)
+                        if success:
+                            st.session_state['logged_in'] = True
+                            st.session_state['username'] = username
+                            st.session_state['is_admin'] = user_manager.is_admin(username)
+                            st.success(message)
+                            st.rerun()
+                        else:
+                            st.error(message)
+                    else:
+                        st.warning("⚠️ Please enter username and password")
+        
+        with tab2:
+            with st.form("register_form"):
+                new_username = st.text_input("👤 Username")
+                new_password = st.text_input("🔒 Password", type="password")
+                new_email = st.text_input("📧 Email (optional)")
+                
+                if st.form_submit_button("📝 Create Account", use_container_width=True):
+                    if new_username and new_password:
+                        success, message = user_manager.register_user(new_username, new_password, new_email)
+                        if success:
+                            st.success(message)
+                            st.info("📝 Wait for admin activation")
+                        else:
+                            st.error(message)
+                    else:
+                        st.warning("⚠️ Please enter username and password")
 
 def admin_panel(user_manager):
     st.markdown("""
     <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
                 padding: 20px; border-radius: 10px; margin-bottom: 20px;">
         <h2 style="color: white; text-align: center;">🛡️ Admin Panel</h2>
-        <p style="color: #e0f0ff; text-align: center;">User Management & Activation</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -3520,7 +3206,6 @@ def admin_panel(user_manager):
         st.metric("👑 Admins", admin_count)
     
     st.markdown("### 🟡 Pending Users")
-    
     pending_users = user_manager.get_pending_users()
     
     if pending_users:
@@ -3529,10 +3214,8 @@ def admin_panel(user_manager):
             with col1:
                 st.write(f"**👤 {username}**")
                 st.caption(f"📧 {data.get('email', 'None')}")
-                st.caption(f"📅 {data.get('created_at', '')[:16] if data.get('created_at') else ''}")
             with col2:
-                st.write("💰 **Pending Payment**")
-                st.caption("⏳ Awaiting activation")
+                st.write("💰 Pending Payment")
             with col3:
                 if st.button(f"✅ Activate {username}", key=f"activate_{username}"):
                     success, message = user_manager.activate_user(username)
@@ -3543,37 +3226,6 @@ def admin_panel(user_manager):
                         st.error(message)
     else:
         st.info("✅ No pending users")
-    
-    st.markdown("### 🟢 Active Users")
-    
-    active_users = user_manager.get_active_users()
-    
-    if active_users:
-        for username, data in active_users.items():
-            col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
-            with col1:
-                st.write(f"**👤 {username}**")
-                st.caption(f"📧 {data.get('email', 'None')}")
-            with col2:
-                st.write("✅ **Active**")
-                if data.get('expiry_date'):
-                    st.caption(f"📅 Expires: {data['expiry_date'][:10]}")
-            with col3:
-                if st.button(f"🔴 Deactivate {username}", key=f"deactivate_{username}"):
-                    success, message = user_manager.deactivate_user(username)
-                    if success:
-                        st.success(message)
-                        st.rerun()
-                    else:
-                        st.error(message)
-            with col4:
-                if st.button(f"📅 Extend {username}", key=f"extend_{username}"):
-                    success, message = user_manager.extend_subscription(username, 30)
-                    if success:
-                        st.success(message)
-                        st.rerun()
-                    else:
-                        st.error(message)
     
     with st.expander("📋 All Users"):
         all_users = user_manager.get_all_users()
@@ -3587,83 +3239,34 @@ def admin_panel(user_manager):
                 "Username": username,
                 "Status": status,
                 "Email": data.get('email', '-'),
-                "Joined": data.get('created_at', '-')[:16] if data.get('created_at') else '-',
-                "Payment": data.get('payment_date', '-')[:16] if data.get('payment_date') else '-'
+                "Joined": data.get('created_at', '-')[:16] if data.get('created_at') else '-'
             })
         
         if users_data:
-            df_users = pd.DataFrame(users_data)
-            st.dataframe(df_users, use_container_width=True)
-
+            st.dataframe(pd.DataFrame(users_data), use_container_width=True)
 
 def payment_page(user_manager):
     st.markdown("""
     <div style="text-align: center; padding: 30px; background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
                 border-radius: 15px; margin-bottom: 30px;">
         <h1 style="color: white;">💎 Activate Account</h1>
-        <p style="color: #e0f0ff;">Get access to all platform features</p>
     </div>
     """, unsafe_allow_html=True)
     
-    col1, col2 = st.columns([1, 2])
+    st.info("""
+    **💰 Subscription Details:**
+    1. Contact me on Telegram: [@SOFIAN232](https://t.me/SOFIAN232)
+    2. Send $99 (monthly)
+    3. Send your username
+    4. Account activated within 24 hours
     
-    with col1:
-        st.markdown("""
-        <div style="background: rgba(30, 60, 114, 0.3); padding: 20px; border-radius: 10px;
-                    border: 2px solid #00ff88;">
-            <h3 style="color: #00ff88;">📋 Features</h3>
-            <ul style="color: #e0f0ff;">
-                <li>📊 5 Timeframes</li>
-                <li>🔵 Blue Liquidity Lines</li>
-                <li>⚪ Strong White Levels</li>
-                <li>🟡 Liquidation Zones</li>
-                <li>🟠 Magnetic Zones</li>
-                <li>📈 Live Updates</li>
-            </ul>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown("""
-        <div style="background: rgba(30, 60, 114, 0.3); padding: 20px; border-radius: 10px;">
-            <h3 style="color: #ffaa00;">💰 Payment Method</h3>
-            <p style="color: #e0f0ff;">
-                1️⃣ Contact me on Telegram:<br>
-                <a href="https://t.me/SOFIAN232" target="_blank" 
-                   style="color: #00ff88; font-size: 1.2em;">
-                    @SOFIAN232
-                </a>
-            </p>
-            <p style="color: #e0f0ff;">
-                2️⃣ Send subscription fee:<br>
-                <span style="color: #ffaa00; font-size: 1.5em;">💵 $99</span>
-                <span style="color: #888;">(monthly)</span>
-            </p>
-            <p style="color: #e0f0ff;">
-                3️⃣ Send your username:<br>
-                <span style="color: #00ff88;">📝 username: {your_username}</span>
-            </p>
-            <div style="background: rgba(255, 165, 0, 0.1); padding: 15px; border-radius: 10px;
-                        border: 1px solid #ffaa00; margin-top: 15px;">
-                <p style="color: #ffaa00; text-align: center;">
-                    ⏳ Account will be activated within 24 hours after payment
-                </p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if st.session_state.get('username'):
-            username = st.session_state['username']
-            user_data = user_manager.get_user_data(username)
-            
-            if user_data:
-                if user_data.get('payment_status') == 'pending':
-                    st.warning("⏳ Your account is pending activation")
-                elif user_data.get('payment_status') == 'paid':
-                    st.success("✅ Your account is active!")
-                    if user_data.get('expiry_date'):
-                        st.info(f"📅 Expires: {user_data['expiry_date'][:10]}")
-
+    **💎 Features:**
+    - 5 Timeframes
+    - Blue Liquidity Lines
+    - White Strong Levels
+    - Yellow Liquidation Zones
+    - Orange Magnetic Zones
+    """)
 
 def analysis_interface():
     st.markdown("""
@@ -3675,14 +3278,6 @@ def analysis_interface():
     """, unsafe_allow_html=True)
     
     analyzer = CryptoAnalyzer()
-    
-    # Examples
-    st.markdown("""
-    **📌 Symbol Examples:**
-    - **Crypto:** BTC/USDT, ETH/USDT, SOL/USDT
-    - **Gold:** XAUUSD, XAU/USD, GOLD
-    - **Forex:** EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD, NZDUSD
-    """)
     
     col1, col2 = st.columns([3, 1])
     
@@ -3699,7 +3294,6 @@ def analysis_interface():
         st.session_state['run_analysis'] = False
         
         with st.spinner(f"🔄 Analyzing {symbol}..."):
-            # Fetch all timeframes
             df_1h, df_4h = analyzer.fetch_data(symbol)
             df_15m = analyzer.fetch_data_15m(symbol)
             df_5m = analyzer.fetch_data_5m(symbol)
@@ -3713,19 +3307,10 @@ def analysis_interface():
                 '1m': df_1m
             }
             
-            # Check if any data was fetched
             has_data = any(df is not None and not df.empty for df in timeframes.values())
             
             if has_data:
-                # Display current price if available
-                for tf, df in timeframes.items():
-                    if df is not None and not df.empty:
-                        current_price = df['close'].iloc[-1]
-                        st.metric("💰 Current Price", f"{current_price:.2f}")
-                        break
-                
-                # Create tabs
-                tabs = st.tabs(["⏰ 4 Hours", "📈 1 Hour", "⏱️ 15 Min", "⏱️ 5 Min", "⏱️ 1 Min"])
+                tabs = st.tabs(["⏰ 4h", "📈 1h", "⏱️ 15m", "⏱️ 5m", "⏱️ 1m"])
                 
                 for tab, (tf, df) in zip(tabs, timeframes.items()):
                     with tab:
@@ -3745,15 +3330,13 @@ def analysis_interface():
                         else:
                             st.error(f"❌ No data for {tf}")
             else:
-                st.error(f"❌ No data available for {symbol}. Please check the symbol and try again.")
-
+                st.error(f"❌ No data available for {symbol}")
 
 # ============================================
-# 🚀 Main Function
+# 🚀 Main
 # ============================================
 
 def main():
-    # Initialize session state
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
     if 'username' not in st.session_state:
@@ -3763,10 +3346,8 @@ def main():
     if 'run_analysis' not in st.session_state:
         st.session_state['run_analysis'] = False
     
-    # Create user manager
     user_manager = UserManager()
     
-    # If not logged in
     if not st.session_state['logged_in']:
         login_page(user_manager)
         return
@@ -3774,39 +3355,23 @@ def main():
     username = st.session_state['username']
     is_admin = st.session_state['is_admin']
     
-    # Check user permission
     if not is_admin:
         user_data = user_manager.get_user_data(username)
         if not user_data or not user_data.get('active', False):
             payment_page(user_manager)
             return
     
-    # Sidebar
     with st.sidebar:
-        st.markdown("""
-        <div style="text-align: center; padding: 10px;">
-            <h2>🧠 Analyzer</h2>
-            <hr>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown(f"""
-        <div style="background: rgba(30, 60, 114, 0.3); padding: 15px; border-radius: 10px; margin-bottom: 20px;">
-            <p>👤 **User:** {username}</p>
-            <p>🔑 **Role:** {"👑 Admin" if is_admin else "👤 User"}</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown("### 🧠 Analyzer")
+        st.markdown(f"👤 **User:** {username}")
+        st.markdown(f"🔑 **Role:** {'👑 Admin' if is_admin else '👤 User'}")
         
         if st.button("🚪 Logout", use_container_width=True):
             st.session_state['logged_in'] = False
             st.session_state['username'] = None
             st.session_state['is_admin'] = False
             st.rerun()
-        
-        st.markdown("<hr>", unsafe_allow_html=True)
-        st.markdown("### 📊 Menu")
     
-    # Display content
     if is_admin:
         tab_admin, tab_analysis = st.tabs(["🛡️ Admin Panel", "📊 Analysis"])
         with tab_admin:
@@ -3815,7 +3380,6 @@ def main():
             analysis_interface()
     else:
         analysis_interface()
-
 
 if __name__ == "__main__":
     main()
