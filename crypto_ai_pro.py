@@ -275,9 +275,15 @@ class UserManager:
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM users WHERE username=?", (username,))
-            if not cursor.fetchone():
+            user = cursor.fetchone()
+            if not user:
                 conn.close()
                 return False, "❌ User not found!"
+            
+            # إذا كان المستخدم مفعّل بالفعل
+            if user[3] == 1:
+                conn.close()
+                return False, f"✅ {username} is already active!"
             
             expiry = datetime.now() + timedelta(days=30)
             cursor.execute('''
@@ -287,7 +293,7 @@ class UserManager:
             ''', (datetime.now().isoformat(), expiry.isoformat(), username))
             conn.commit()
             conn.close()
-            return True, f"✅ Account {username} activated!"
+            return True, f"✅ Account {username} activated! (Expires: {expiry.strftime('%Y-%m-%d')})"
         except Exception as e:
             return False, f"❌ Error: {str(e)}"
     
@@ -298,6 +304,17 @@ class UserManager:
         try:
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
+            cursor.execute("SELECT * FROM users WHERE username=?", (username,))
+            user = cursor.fetchone()
+            if not user:
+                conn.close()
+                return False, "❌ User not found!"
+            
+            # إذا كان المستخدم غير مفعّل بالفعل
+            if user[3] == 0:
+                conn.close()
+                return False, f"⚠️ {username} is already deactivated!"
+            
             cursor.execute('''
                 UPDATE users 
                 SET active=0, payment_status='expired'
@@ -309,16 +326,53 @@ class UserManager:
         except Exception as e:
             return False, f"❌ Error: {str(e)}"
     
+    def delete_user(self, username):
+        """حذف المستخدم نهائياً"""
+        if username == ADMIN_USERNAME:
+            return False, "❌ Cannot delete admin!"
+        
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM users WHERE username=?", (username,))
+            if not cursor.fetchone():
+                conn.close()
+                return False, "❌ User not found!"
+            
+            cursor.execute("DELETE FROM users WHERE username=?", (username,))
+            conn.commit()
+            conn.close()
+            return True, f"✅ User {username} deleted permanently!"
+        except Exception as e:
+            return False, f"❌ Error: {str(e)}"
+    
     def extend_subscription(self, username, days=30):
         try:
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
-            cursor.execute("SELECT expiry_date FROM users WHERE username=?", (username,))
+            cursor.execute("SELECT expiry_date, active FROM users WHERE username=?", (username,))
             result = cursor.fetchone()
             
-            if result and result[0]:
+            if not result:
+                conn.close()
+                return False, "❌ User not found!"
+            
+            # إذا كان المستخدم غير مفعّل، نفعّله أولاً
+            if result[1] == 0:
+                cursor.execute('''
+                    UPDATE users 
+                    SET active=1, payment_status='paid'
+                    WHERE username=?
+                ''', (username,))
+            
+            # تمديد الصلاحية
+            if result[0]:
                 current_expiry = datetime.fromisoformat(result[0])
-                new_expiry = current_expiry + timedelta(days=days)
+                # إذا انتهت الصلاحية، نبدأ من اليوم
+                if current_expiry < datetime.now():
+                    new_expiry = datetime.now() + timedelta(days=days)
+                else:
+                    new_expiry = current_expiry + timedelta(days=days)
             else:
                 new_expiry = datetime.now() + timedelta(days=days)
             
@@ -329,7 +383,7 @@ class UserManager:
             ''', (new_expiry.isoformat(), username))
             conn.commit()
             conn.close()
-            return True, f"✅ Subscription extended for {username} (+{days} days)"
+            return True, f"✅ Subscription extended for {username} (+{days} days) until {new_expiry.strftime('%Y-%m-%d')}"
         except Exception as e:
             return False, f"❌ Error: {str(e)}"
     
@@ -426,6 +480,17 @@ class UserManager:
             return total, active, pending, admin
         except:
             return 0, 0, 0, 0
+    
+    def get_user_expiry(self, username):
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute("SELECT expiry_date FROM users WHERE username=?", (username,))
+            result = cursor.fetchone()
+            conn.close()
+            return result[0] if result and result[0] else None
+        except:
+            return None
 
 # ============================================
 # 🎯 Liquidation Zones Detector
@@ -3239,15 +3304,23 @@ def admin_panel(user_manager):
     
     if pending_users:
         for username, data in pending_users.items():
-            col1, col2, col3 = st.columns([2, 2, 1])
+            col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
             with col1:
                 st.write(f"**👤 {username}**")
                 st.caption(f"📧 {data.get('email', 'None')}")
             with col2:
                 st.write("💰 Pending Payment")
             with col3:
-                if st.button(f"✅ Activate {username}", key=f"activate_{username}"):
+                if st.button(f"✅ Activate", key=f"activate_{username}"):
                     success, message = user_manager.activate_user(username)
+                    if success:
+                        st.success(message)
+                        st.rerun()
+                    else:
+                        st.error(message)
+            with col4:
+                if st.button(f"🗑️ Delete", key=f"delete_{username}"):
+                    success, message = user_manager.delete_user(username)
                     if success:
                         st.success(message)
                         st.rerun()
@@ -3256,14 +3329,14 @@ def admin_panel(user_manager):
     else:
         st.info("✅ No pending users")
     
-    # ========== 📋 All Users مع أزرار ==========
+    # ========== 📋 All Users مع أزرار كاملة ==========
     st.markdown("### 📋 All Users")
     
     all_users = user_manager.get_all_users()
     
     if all_users:
         # رأس الجدول
-        col1, col2, col3, col4, col5 = st.columns([2, 1.5, 1.5, 1.5, 1.5])
+        col1, col2, col3, col4, col5, col6, col7 = st.columns([1.5, 1, 1.5, 1.5, 1, 1, 1])
         with col1:
             st.write("**Username**")
         with col2:
@@ -3271,9 +3344,13 @@ def admin_panel(user_manager):
         with col3:
             st.write("**Email**")
         with col4:
-            st.write("**Joined**")
+            st.write("**Expiry**")
         with col5:
-            st.write("**Actions**")
+            st.write("**Activate**")
+        with col6:
+            st.write("**Deactivate**")
+        with col7:
+            st.write("**Delete**")
         
         st.divider()
         
@@ -3282,7 +3359,7 @@ def admin_panel(user_manager):
             if username == ADMIN_USERNAME:
                 continue
             
-            col1, col2, col3, col4, col5 = st.columns([2, 1.5, 1.5, 1.5, 1.5])
+            col1, col2, col3, col4, col5, col6, col7 = st.columns([1.5, 1, 1.5, 1.5, 1, 1, 1])
             
             with col1:
                 st.write(f"**{username}**")
@@ -3296,43 +3373,86 @@ def admin_panel(user_manager):
             with col3:
                 st.write(data.get('email', '-'))
             with col4:
-                created = data.get('created_at', '-')
-                if created and created != '-':
-                    st.write(created[:16])
+                expiry = data.get('expiry_date', '-')
+                if expiry and expiry != '-':
+                    try:
+                        expiry_date = datetime.fromisoformat(expiry)
+                        days_left = (expiry_date - datetime.now()).days
+                        if days_left > 0:
+                            st.write(f"{expiry[:10]} ({days_left}d)")
+                        else:
+                            st.write(f"⚠️ {expiry[:10]} (Expired)")
+                    except:
+                        st.write(expiry[:10])
                 else:
                     st.write('-')
             with col5:
-                # أزرار التحكم
-                if not data.get('is_admin', False):
-                    if data.get('active', False):
-                        # إذا كان مفعّل → زر تعطيل
-                        if st.button(f"❌ Deactivate", key=f"deact_{username}"):
-                            success, message = user_manager.deactivate_user(username)
-                            if success:
-                                st.success(message)
-                                st.rerun()
-                            else:
-                                st.error(message)
-                    else:
-                        # إذا كان غير مفعّل → زر تفعيل
-                        if st.button(f"✅ Activate", key=f"act_{username}"):
-                            success, message = user_manager.activate_user(username)
-                            if success:
-                                st.success(message)
-                                st.rerun()
-                            else:
-                                st.error(message)
-                    
-                    # زر تمديد الاشتراك
-                    if st.button(f"📅 Extend", key=f"ext_{username}"):
-                        success, message = user_manager.extend_subscription(username, 30)
+                if not data.get('is_admin', False) and not data.get('active', False):
+                    if st.button(f"✅ Activate", key=f"act_{username}"):
+                        success, message = user_manager.activate_user(username)
                         if success:
                             st.success(message)
                             st.rerun()
                         else:
                             st.error(message)
+                elif data.get('active', False):
+                    st.write("✅ Active")
+                else:
+                    st.write("—")
+            with col6:
+                if not data.get('is_admin', False) and data.get('active', False):
+                    if st.button(f"❌ Deactivate", key=f"deact_{username}"):
+                        success, message = user_manager.deactivate_user(username)
+                        if success:
+                            st.success(message)
+                            st.rerun()
+                        else:
+                            st.error(message)
+                elif not data.get('active', False):
+                    st.write("⏳ Inactive")
+                else:
+                    st.write("—")
+            with col7:
+                if not data.get('is_admin', False):
+                    if st.button(f"🗑️ Delete", key=f"del_{username}"):
+                        success, message = user_manager.delete_user(username)
+                        if success:
+                            st.success(message)
+                            st.rerun()
+                        else:
+                            st.error(message)
+                else:
+                    st.write("👑")
     else:
         st.info("📭 No users found")
+    
+    # ========== 🔧 أدوات إضافية ==========
+    st.markdown("### 🔧 Admin Tools")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**📅 Extend Subscription**")
+        users_list = [u for u in all_users.keys() if u != ADMIN_USERNAME] if all_users else []
+        if users_list:
+            selected_user = st.selectbox("Select user", users_list, key="extend_select")
+            days = st.number_input("Days to extend", min_value=1, max_value=365, value=30, key="extend_days")
+            if st.button("📅 Extend Subscription", key="extend_btn"):
+                success, message = user_manager.extend_subscription(selected_user, days)
+                if success:
+                    st.success(message)
+                    st.rerun()
+                else:
+                    st.error(message)
+        else:
+            st.info("No users to extend")
+    
+    with col2:
+        st.markdown("**📊 User Stats**")
+        st.write(f"👥 Total: {total}")
+        st.write(f"🟢 Active: {active}")
+        st.write(f"🟡 Pending: {pending}")
+        st.write(f"👑 Admins: {admin_count}")
 
 def payment_page(user_manager):
     st.markdown("""
@@ -3454,6 +3574,14 @@ def main():
         st.markdown("### 🧠 Analyzer")
         st.markdown(f"👤 **User:** {username}")
         st.markdown(f"🔑 **Role:** {'👑 Admin' if is_admin else '👤 User'}")
+        
+        if is_admin:
+            st.markdown("---")
+            st.markdown("### 📊 Quick Stats")
+            total, active, pending, admin_count = user_manager.get_users_count()
+            st.metric("👥 Users", total)
+            st.metric("🟢 Active", active)
+            st.metric("🟡 Pending", pending)
         
         if st.button("🚪 Logout", use_container_width=True):
             st.session_state['logged_in'] = False
