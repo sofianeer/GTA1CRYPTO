@@ -60,7 +60,7 @@ def get_exchange_future():
         return None
 
 # ============================================
-# 📊 Data Fetcher (Auto Detect Market - بدون ذهب)
+# 📊 Data Fetcher (Auto Detect Market)
 # ============================================
 
 @st.cache_data(ttl=CACHE_DURATION_DATA)
@@ -3256,23 +3256,83 @@ def admin_panel(user_manager):
     else:
         st.info("✅ No pending users")
     
-    with st.expander("📋 All Users"):
-        all_users = user_manager.get_all_users()
-        users_data = []
-        for username, data in all_users.items():
-            status = "🟢 Active" if data.get('active', False) else "🟡 Pending"
-            if data.get('is_admin', False):
-                status = "👑 Admin"
-            
-            users_data.append({
-                "Username": username,
-                "Status": status,
-                "Email": data.get('email', '-'),
-                "Joined": data.get('created_at', '-')[:16] if data.get('created_at') else '-'
-            })
+    # ========== 📋 All Users مع أزرار ==========
+    st.markdown("### 📋 All Users")
+    
+    all_users = user_manager.get_all_users()
+    
+    if all_users:
+        # رأس الجدول
+        col1, col2, col3, col4, col5 = st.columns([2, 1.5, 1.5, 1.5, 1.5])
+        with col1:
+            st.write("**Username**")
+        with col2:
+            st.write("**Status**")
+        with col3:
+            st.write("**Email**")
+        with col4:
+            st.write("**Joined**")
+        with col5:
+            st.write("**Actions**")
         
-        if users_data:
-            st.dataframe(pd.DataFrame(users_data), use_container_width=True)
+        st.divider()
+        
+        for username, data in all_users.items():
+            # تخطي المدير الرئيسي
+            if username == ADMIN_USERNAME:
+                continue
+            
+            col1, col2, col3, col4, col5 = st.columns([2, 1.5, 1.5, 1.5, 1.5])
+            
+            with col1:
+                st.write(f"**{username}**")
+            with col2:
+                if data.get('is_admin', False):
+                    st.write("👑 Admin")
+                elif data.get('active', False):
+                    st.write("🟢 Active")
+                else:
+                    st.write("🟡 Pending")
+            with col3:
+                st.write(data.get('email', '-'))
+            with col4:
+                created = data.get('created_at', '-')
+                if created and created != '-':
+                    st.write(created[:16])
+                else:
+                    st.write('-')
+            with col5:
+                # أزرار التحكم
+                if not data.get('is_admin', False):
+                    if data.get('active', False):
+                        # إذا كان مفعّل → زر تعطيل
+                        if st.button(f"❌ Deactivate", key=f"deact_{username}"):
+                            success, message = user_manager.deactivate_user(username)
+                            if success:
+                                st.success(message)
+                                st.rerun()
+                            else:
+                                st.error(message)
+                    else:
+                        # إذا كان غير مفعّل → زر تفعيل
+                        if st.button(f"✅ Activate", key=f"act_{username}"):
+                            success, message = user_manager.activate_user(username)
+                            if success:
+                                st.success(message)
+                                st.rerun()
+                            else:
+                                st.error(message)
+                    
+                    # زر تمديد الاشتراك
+                    if st.button(f"📅 Extend", key=f"ext_{username}"):
+                        success, message = user_manager.extend_subscription(username, 30)
+                        if success:
+                            st.success(message)
+                            st.rerun()
+                        else:
+                            st.error(message)
+    else:
+        st.info("📭 No users found")
 
 def payment_page(user_manager):
     st.markdown("""
