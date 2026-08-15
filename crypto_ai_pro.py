@@ -3,2203 +3,3715 @@ import pandas as pd
 import numpy as np
 import ccxt
 import talib
-from tensorflow.keras.models import Sequential, load_model
-from tensorflow.keras.layers import LSTM, Dense, Dropout
-from sklearn.preprocessing import MinMaxScaler
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from datetime import datetime, timedelta
-import os
-import joblib
-import hashlib
 from scipy.signal import argrelextrema
 from scipy.stats import linregress
-from sklearn.cluster import DBSCAN
-import matplotlib.colors as mcolors
+from sklearn.cluster import DBSCAN, KMeans
+from sklearn.preprocessing import StandardScaler
+from datetime import datetime, timedelta
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import time
-import random
-import textwrap
-from PIL import Image
-import base64
-
-# إعدادات التطبيق
-st.set_page_config(
-    page_title="CryptoAI Pro+ 2100",
-    page_icon="🚀",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# إنشاء المجلدات إذا لم تكن موجودة
-os.makedirs("models", exist_ok=True)
-os.makedirs("data", exist_ok=True)
-
-# تصميم فضائي متطور من عام 2100 مع تحسينات للوضوح
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700&family=Roboto:wght@300;400;500&display=swap');
-
-:root {
-    --primary: #00f0ff;
-    --secondary: #0080ff;
-    --accent: #ff00f0;
-    --dark: #0a0a1a;
-    --darker: #050510;
-    --light: #ffffff;  /* تغيير إلى أبيض نقي لتحسين الوضوح */
-    --text: #e0e0e0;  /* لون النص الأساسي */
-    --neon-glow: 0 0 10px rgba(0, 240, 255, 0.7), 0 0 20px rgba(0, 240, 255, 0.5);
-    --neon-pink-glow: 0 0 10px rgba(255, 0, 240, 0.7), 0 0 20px rgba(255, 0, 240, 0.5);
-    --space-gradient: linear-gradient(135deg, #000428 0%, #004e92 100%);
-    --galaxy-bg: url('https://images.unsplash.com/photo-1534796636912-3b95b3ab5986?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80');
-}
-
-body {
-    background: var(--space-gradient);
-    color: var(--text);
-    font-family: 'Roboto', sans-serif;
-    line-height: 1.6;
-}
-
-h1, h2, h3, h4, h5, h6 {
-    font-family: 'Orbitron', sans-serif;
-    color: var(--primary);
-    text-shadow: var(--neon-glow);
-    margin-bottom: 0.5em;
-}
-
-.stApp {
-    background: var(--space-gradient);
-}
-
-/* الشريط الجانبي */
-[data-testid="stSidebar"] {
-    background: rgba(5, 5, 16, 0.95) !important;
-    border-right: 1px solid rgba(0, 240, 255, 0.3);
-    box-shadow: var(--neon-glow);
-}
-
-/* بطاقات التحليل */
-.card {
-    border-radius: 12px;
-    padding: 20px;
-    margin-bottom: 20px;
-    background: rgba(10, 10, 30, 0.8);
-    border: 1px solid rgba(0, 240, 255, 0.3);
-    box-shadow: var(--neon-glow);
-    transition: all 0.3s ease;
-    backdrop-filter: blur(5px);
-    position: relative;
-    overflow: hidden;
-    color: var(--text);
-}
-
-.card::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: radial-gradient(circle at 20% 30%, rgba(0, 240, 255, 0.1) 0%, transparent 70%);
-    z-index: -1;
-}
-
-.card:hover {
-    transform: translateY(-5px);
-    box-shadow: 0 0 15px rgba(0, 240, 255, 0.8), 0 0 25px rgba(0, 240, 255, 0.4);
-}
-
-/* إشارات التداول */
-.signal-buy {
-    border-left: 4px solid #00ff88;
-    background: linear-gradient(90deg, rgba(0, 255, 136, 0.1) 0%, rgba(10, 10, 30, 0) 100%);
-    box-shadow: 0 0 10px rgba(0, 255, 136, 0.3);
-}
-
-.signal-sell {
-    border-left: 4px solid #ff0066;
-    background: linear-gradient(90deg, rgba(255, 0, 102, 0.1) 0%, rgba(10, 10, 30, 0) 100%);
-    box-shadow: 0 0 10px rgba(255, 0, 102, 0.3);
-}
-
-/* مستويات الدعم والمقاومة */
-.support-level {
-    background: linear-gradient(90deg, rgba(0, 255, 136, 0.1) 0%, rgba(10, 10, 30, 0) 100%);
-    border-left: 4px solid #00ff88;
-}
-
-.resistance-level {
-    background: linear-gradient(90deg, rgba(255, 0, 102, 0.1) 0%, rgba(10, 10, 30, 0) 100%);
-    border-left: 4px solid #ff0066;
-}
-
-.liquidity-zone {
-    background: linear-gradient(90deg, rgba(0, 144, 255, 0.1) 0%, rgba(10, 10, 30, 0) 100%);
-    border-left: 4px solid #0090ff;
-}
-
-/* تغيرات الأسعار */
-.price-change-positive {
-    color: #00ff88;
-    font-weight: bold;
-    text-shadow: 0 0 5px rgba(0, 255, 136, 0.5);
-}
-
-.price-change-negative {
-    color: #ff0066;
-    font-weight: bold;
-    text-shadow: 0 0 5px rgba(255, 0, 102, 0.5);
-}
-
-/* قوة المستويات */
-.level-strength {
-    display: inline-block;
-    padding: 3px 8px;
-    border-radius: 12px;
-    font-size: 0.8em;
-    font-weight: bold;
-    margin-top: 5px;
-}
-
-.high-strength {
-    background-color: #00ff88;
-    color: #050510;
-    box-shadow: 0 0 8px rgba(0, 255, 136, 0.5);
-}
-
-.medium-strength {
-    background-color: #ffaa00;
-    color: #050510;
-    box-shadow: 0 0 8px rgba(255, 170, 0, 0.5);
-}
-
-.low-strength {
-    background-color: #ff0066;
-    color: #050510;
-    box-shadow: 0 0 8px rgba(255, 0, 102, 0.5);
-}
-
-/* ثقة الإشارة */
-.signal-confidence {
-    font-size: 2.5em;
-    font-weight: bold;
-    text-align: center;
-    margin: 15px 0;
-    text-shadow: var(--neon-glow);
-}
-
-.signal-confidence.high {
-    color: #00ff88;
-}
-
-.signal-confidence.medium {
-    color: #ffaa00;
-}
-
-.signal-confidence.low {
-    color: #ff0066;
-}
-
-/* مربع الإشارة */
-.signal-box {
-    border-radius: 12px;
-    padding: 25px;
-    margin: 15px 0;
-    text-align: center;
-    font-weight: bold;
-    font-size: 1.2em;
-    backdrop-filter: blur(5px);
-    position: relative;
-    overflow: hidden;
-    color: var(--light);
-}
-
-.signal-box::before {
-    content: '';
-    position: absolute;
-    top: -50%;
-    left: -50%;
-    width: 200%;
-    height: 200%;
-    background: linear-gradient(
-        to bottom right,
-        rgba(0, 240, 255, 0) 0%,
-        rgba(0, 240, 255, 0) 30%,
-        rgba(0, 240, 255, 0.1) 45%,
-        rgba(0, 240, 255, 0) 60%,
-        rgba(0, 240, 255, 0) 100%
-    );
-    transform: rotate(30deg);
-    animation: holographic-effect 6s linear infinite;
-}
-
-.signal-box.buy {
-    background: rgba(0, 255, 136, 0.2);
-    border: 1px solid #00ff88;
-    color: #00ff88;
-    box-shadow: 0 0 15px rgba(0, 255, 136, 0.5);
-}
-
-.signal-box.sell {
-    background: rgba(255, 0, 102, 0.2);
-    border: 1px solid #ff0066;
-    color: #ff0066;
-    box-shadow: 0 0 15px rgba(255, 0, 102, 0.5);
-}
-
-/* مستويات المخاطرة */
-.risk-level {
-    padding: 10px 15px;
-    border-radius: 20px;
-    font-weight: bold;
-    display: inline-block;
-    margin: 5px 0;
-    backdrop-filter: blur(5px);
-    color: white;
-}
-
-.risk-high {
-    background-color: #ff0066;
-    box-shadow: 0 0 10px rgba(255, 0, 102, 0.5);
-}
-
-.risk-medium {
-    background-color: #ffaa00;
-    box-shadow: 0 0 10px rgba(255, 170, 0, 0.5);
-}
-
-.risk-low {
-    background-color: #00ff88;
-    box-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
-}
-
-/* لوحة التحليل */
-.analysis-box {
-    border-left: 4px solid var(--primary);
-    padding: 20px;
-    margin: 20px 0;
-    background: rgba(0, 240, 255, 0.08);
-    border-radius: 0 12px 12px 0;
-    backdrop-filter: blur(5px);
-    color: var(--text);
-}
-
-.advice-box {
-    border-left: 4px solid #00ff88;
-    padding: 20px;
-    margin: 20px 0;
-    background: rgba(0, 255, 136, 0.08);
-    border-radius: 0 12px 12px 0;
-    backdrop-filter: blur(5px);
-    color: var(--text);
-}
-
-.warning-box {
-    border-left: 4px solid #ffaa00;
-    padding: 20px;
-    margin: 20px 0;
-    background: rgba(255, 170, 0, 0.08);
-    border-radius: 0 12px 12px 0;
-    backdrop-filter: blur(5px);
-    color: var(--text);
-}
-
-/* الروبوت في الشريط الجانبي */
-.sidebar-robot {
-    width: 150px;
-    height: 150px;
-    margin: 0 auto 20px;
-    display: block;
-    animation: float 3s ease-in-out infinite;
-    filter: drop-shadow(0 0 15px rgba(0, 240, 255, 0.7));
-}
-
-.sidebar-robot-container {
-    text-align: center;
-    padding: 20px 0;
-    border-bottom: 1px solid rgba(0, 240, 255, 0.3);
-    margin-bottom: 20px;
-    position: relative;
-}
-
-.status-pulse {
-    width: 12px;
-    height: 12px;
-    background-color: #00ff88;
-    border-radius: 50%;
-    display: inline-block;
-    margin-right: 8px;
-    animation: pulse 1.5s infinite;
-}
-
-.sidebar-notes {
-    background: rgba(10, 20, 40, 0.7);
-    border-radius: 12px;
-    padding: 15px;
-    margin-bottom: 15px;
-    border: 1px solid rgba(0, 240, 255, 0.3);
-    box-shadow: 0 0 15px rgba(0, 240, 255, 0.3);
-    color: var(--text);
-}
-
-.sidebar-note {
-    font-size: 0.95em;
-    margin-bottom: 12px;
-    padding-bottom: 12px;
-    border-bottom: 1px dashed rgba(0, 240, 255, 0.3);
-    line-height: 1.5;
-}
-
-.sidebar-note:last-child {
-    border-bottom: none;
-}
-
-.ai-chip {
-    display: inline-block;
-    padding: 5px 12px;
-    background: rgba(0, 240, 255, 0.15);
-    border-radius: 20px;
-    font-size: 0.8em;
-    margin: 0 5px;
-    border: 1px solid rgba(0, 240, 255, 0.3);
-}
-
-/* الرسوم المتحركة */
-@keyframes float {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-10px); }
-}
-
-@keyframes holographic-effect {
-    0% { transform: translateY(-100%) rotate(30deg); }
-    100% { transform: translateY(100%) rotate(30deg); }
-}
-
-@keyframes neon-flicker {
-    0%, 19.999%, 22%, 62.999%, 64%, 64.999%, 70%, 100% {
-        opacity: 1;
-    }
-    20%, 21.999%, 63%, 63.999%, 65%, 69.999% {
-        opacity: 0.5;
-    }
-}
-
-@keyframes pulse {
-    0% { transform: scale(0.95); opacity: 0.7; }
-    50% { transform: scale(1.1); opacity: 1; }
-    100% { transform: scale(0.95); opacity: 0.7; }
-}
-
-.neon-flicker {
-    animation: neon-flicker 3s infinite alternate;
-}
-
-/* الأزرار الفضائية */
-.futuristic-button {
-    background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
-    color: var(--dark);
-    border: none;
-    border-radius: 25px;
-    padding: 12px 30px;
-    font-family: 'Orbitron', sans-serif;
-    font-weight: bold;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    box-shadow: 0 0 15px rgba(0, 240, 255, 0.5);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    font-size: 1em;
-}
-
-.futuristic-button:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 0 25px rgba(0, 240, 255, 0.8);
-    background: linear-gradient(135deg, var(--accent) 0%, var(--primary) 100%);
-    color: white;
-}
-
-/* شريط التبويب */
-.stTabs [role="tablist"] {
-    background: rgba(10, 20, 40, 0.6);
-    border-radius: 12px;
-    padding: 5px;
-    margin-bottom: 20px;
-    backdrop-filter: blur(5px);
-}
-
-.stTabs [role="tab"] {
-    color: var(--text);
-    font-weight: bold;
-    padding: 10px 20px;
-    border-radius: 8px;
-    transition: all 0.3s ease;
-}
-
-.stTabs [role="tab"][aria-selected="true"] {
-    background: rgba(0, 240, 255, 0.2);
-    color: var(--primary);
-    box-shadow: 0 0 10px rgba(0, 240, 255, 0.3);
-}
-
-/* الرأس الرئيسي */
-.ai-header {
-    background: linear-gradient(135deg, rgba(0, 240, 255, 0.1) 0%, rgba(0, 144, 255, 0.1) 100%);
-    border-radius: 15px;
-    padding: 30px;
-    margin-bottom: 30px;
-    text-align: center;
-    border: 1px solid rgba(0, 240, 255, 0.3);
-    box-shadow: var(--neon-glow);
-    backdrop-filter: blur(5px);
-    position: relative;
-    overflow: hidden;
-}
-
-.ai-header::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: url('https://images.unsplash.com/photo-1506318137071-a8e063b4bec0?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80');
-    background-size: cover;
-    opacity: 0.1;
-    z-index: -1;
-}
-
-.ai-header h1 {
-    font-size: 2.5em;
-    margin-bottom: 10px;
-    letter-spacing: 2px;
-}
-
-.ai-header p {
-    font-size: 1.2em;
-    margin-bottom: 20px;
-}
-
-/* الرسوم البيانية */
-.js-plotly-plot .plotly, .js-plotly-plot .plotly div {
-    background: transparent !important;
-}
-
-/* شريط التمرير */
-::-webkit-scrollbar {
-    width: 8px;
-}
-
-::-webkit-scrollbar-track {
-    background: rgba(10, 10, 30, 0.5);
-}
-
-::-webkit-scrollbar-thumb {
-    background: var(--primary);
-    border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-    background: var(--accent);
-}
-
-/* تأثيرات النجوم */
-.stars {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    z-index: -1;
-    overflow: hidden;
-}
-
-.star {
-    position: absolute;
-    background: white;
-    border-radius: 50%;
-    animation: twinkle var(--duration) infinite ease-in-out;
-}
-
-@keyframes twinkle {
-    0%, 100% { opacity: 0.2; }
-    50% { opacity: 1; }
-}
-
-/* تأثيرات الجسيمات */
-.particles {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    z-index: -1;
-    overflow: hidden;
-}
-
-.particle {
-    position: absolute;
-    background: rgba(0, 240, 255, 0.5);
-    border-radius: 50%;
-    animation: float-particle var(--duration) infinite ease-in-out;
-}
-
-@keyframes float-particle {
-    0% { transform: translate(0, 0); opacity: 0; }
-    10% { opacity: 1; }
-    90% { opacity: 1; }
-    100% { transform: translate(var(--tx), var(--ty)); opacity: 0; }
-}
-
-/* تأثيرات الشاشة الفضائية */
-.screen-effect {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    z-index: -1;
-    background: 
-        radial-gradient(circle at 20% 30%, rgba(0, 240, 255, 0.05) 0%, transparent 70%),
-        radial-gradient(circle at 80% 70%, rgba(255, 0, 240, 0.05) 0%, transparent 70%);
-    pointer-events: none;
-}
-
-/* تأثيرات الشبكة */
-.grid-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    z-index: -1;
-    background-image: 
-        linear-gradient(rgba(0, 240, 255, 0.1) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0, 240, 255, 0.1) 1px, transparent 1px);
-    background-size: 50px 50px;
-    opacity: 0.3;
-    pointer-events: none;
-}
-
-/* تأثيرات النبض */
-.pulse-effect {
-    position: absolute;
-    width: 100%;
-    height: 100%;
-    top: 0;
-    left: 0;
-    background: radial-gradient(circle, rgba(0, 240, 255, 0.1) 0%, transparent 70%);
-    animation: pulse 4s infinite ease-in-out;
-    z-index: -1;
-}
-
-/* تأثيرات الخطوط المتقاطعة */
-.scanlines {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    z-index: -1;
-    background: linear-gradient(
-        to bottom,
-        transparent 0%,
-        rgba(0, 240, 255, 0.05) 50%,
-        transparent 100%
-    );
-    background-size: 100% 4px;
-    pointer-events: none;
-    animation: scanline 8s linear infinite;
-}
-
-@keyframes scanline {
-    0% { background-position: 0 0; }
-    100% { background-position: 0 100%; }
-}
-
-/* تأثيرات البيانات */
-.data-stream {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    z-index: -1;
-    background: 
-        linear-gradient(0deg, transparent 0%, rgba(0, 240, 255, 0.02) 1%, transparent 100%);
-    background-size: 100% 8px;
-    pointer-events: none;
-    animation: datastream 20s linear infinite;
-}
-
-/* تحسينات للوضوح */
-.stMarkdown, .stText, .stMetricLabel, .stMetricValue {
-    color: var(--text) !important;
-}
-
-.stTextInput>div>div>input, .stSelectbox>div>div>select {
-    color: var(--light) !important;
-    background-color: rgba(10, 20, 40, 0.7) !important;
-    border: 1px solid rgba(0, 240, 255, 0.3) !important;
-}
-
-.stSelectbox>div>div>select {
-    padding: 10px !important;
-}
-
-.stButton>button {
-    width: 100%;
-}
-
-/* بطاقة المساعد الذكي */
-.assistant-card {
-    background: rgba(10, 20, 40, 0.8);
-    border-radius: 15px;
-    padding: 20px;
-    margin-bottom: 20px;
-    border: 1px solid rgba(0, 240, 255, 0.3);
-    box-shadow: 0 0 20px rgba(0, 240, 255, 0.2);
-    position: relative;
-    overflow: hidden;
-}
-
-.assistant-card::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: radial-gradient(circle at 70% 20%, rgba(0, 240, 255, 0.1) 0%, transparent 70%);
-    z-index: -1;
-}
-
-.assistant-header {
-    display: flex;
-    align-items: center;
-    margin-bottom: 15px;
-    padding-bottom: 15px;
-    border-bottom: 1px solid rgba(0, 240, 255, 0.2);
-}
-
-.assistant-avatar {
-    width: 50px;
-    height: 50px;
-    border-radius: 50%;
-    margin-right: 15px;
-    background: rgba(0, 240, 255, 0.2);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 24px;
-}
-
-.assistant-message {
-    padding: 15px;
-    background: rgba(0, 240, 255, 0.1);
-    border-radius: 10px;
-    margin-bottom: 10px;
-    border-left: 3px solid var(--primary);
-}
-
-.assistant-tip {
-    padding: 12px;
-    background: rgba(255, 170, 0, 0.1);
-    border-radius: 10px;
-    margin-bottom: 10px;
-    border-left: 3px solid #ffaa00;
-}
-
-.assistant-warning {
-    padding: 12px;
-    background: rgba(255, 0, 102, 0.1);
-    border-radius: 10px;
-    margin-bottom: 10px;
-    border-left: 3px solid #ff0066;
-}
-
-/* تحسينات للجداول */
-.stDataFrame {
-    background: rgba(10, 20, 40, 0.7) !important;
-    border-radius: 10px !important;
-    border: 1px solid rgba(0, 240, 255, 0.3) !important;
-}
-
-/* تأثيرات خاصة */
-.holographic {
-    position: relative;
-    overflow: hidden;
-}
-
-.holographic::after {
-    content: '';
-    position: absolute;
-    top: -50%;
-    left: -50%;
-    width: 200%;
-    height: 200%;
-    background: linear-gradient(
-        to bottom right,
-        rgba(0, 240, 255, 0) 0%,
-        rgba(0, 240, 255, 0) 30%,
-        rgba(0, 240, 255, 0.1) 45%,
-        rgba(0, 240, 255, 0) 60%,
-        rgba(0, 240, 255, 0) 100%
-    );
-    transform: rotate(30deg);
-    animation: holographic-effect 6s linear infinite;
-    pointer-events: none;
-}
-
-/* تأثيرات النص */
-.text-gradient {
-    background: linear-gradient(90deg, var(--primary), var(--accent));
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-}
-
-/* تحسينات للتفاعل */
-.tooltip {
-    position: relative;
-    display: inline-block;
-}
-
-.tooltip .tooltiptext {
-    visibility: hidden;
-    width: 200px;
-    background-color: rgba(10, 20, 40, 0.9);
-    color: var(--text);
-    text-align: center;
-    border-radius: 6px;
-    padding: 10px;
-    position: absolute;
-    z-index: 1;
-    bottom: 125%;
-    left: 50%;
-    margin-left: -100px;
-    opacity: 0;
-    transition: opacity 0.3s;
-    border: 1px solid rgba(0, 240, 255, 0.3);
-    box-shadow: 0 0 15px rgba(0, 240, 255, 0.3);
-}
-
-.tooltip:hover .tooltiptext {
-    visibility: visible;
-    opacity: 1;
-}
-
-/* أرقام الصفقات باللون الأبيض */
-.trade-numbers {
-    color: white !important;
-    font-weight: bold;
-}
-
-/* التعديلات المطلوبة لجعل النصوص والأرقام باللون الأبيض */
-.stMetricLabel, .stMetricValue, .stMetricDelta {
-    color: white !important;
-}
-
-.stMetricLabel {
-    font-size: 1.1em !important;
-    font-weight: bold !important;
-}
-
-.stMetricValue {
-    font-size: 1.4em !important;
-    font-weight: bold !important;
-}
-
-.stMetricDelta {
-    font-size: 1em !important;
-}
-</style>
-
-<!-- تأثيرات الخلفية الفضائية -->
-<div class="stars" id="stars"></div>
-<div class="particles" id="particles"></div>
-<div class="screen-effect"></div>
-<div class="grid-overlay"></div>
-<div class="scanlines"></div>
-<div class="data-stream"></div>
-<div class="pulse-effect"></div>
-
-<script>
-// إنشاء النجوم
-const starsContainer = document.getElementById('stars');
-for (let i = 0; i < 200; i++) {
-    const star = document.createElement('div');
-    star.className = 'star';
-    star.style.width = `${Math.random() * 3}px`;
-    star.style.height = star.style.width;
-    star.style.left = `${Math.random() * 100}%`;
-    star.style.top = `${Math.random() * 100}%`;
-    star.style.setProperty('--duration', `${5 + Math.random() * 10}s`);
-    starsContainer.appendChild(star);
-}
-
-// إنشاء الجسيمات
-const particlesContainer = document.getElementById('particles');
-for (let i = 0; i < 50; i++) {
-    const particle = document.createElement('div');
-    particle.className = 'particle';
-    particle.style.width = `${2 + Math.random() * 5}px`;
-    particle.style.height = particle.style.width;
-    particle.style.left = `${Math.random() * 100}%`;
-    particle.style.top = `${Math.random() * 100}%`;
-    particle.style.setProperty('--duration', `${10 + Math.random() * 20}s`);
-    particle.style.setProperty('--tx', `${-50 + Math.random() * 100}px`);
-    particle.style.setProperty('--ty', `${-50 + Math.random() * 100}px`);
-    particlesContainer.appendChild(particle);
-}
-</script>
-""", unsafe_allow_html=True)
-
-class MarketSimulator:
-    def __init__(self, spread=0.001, commission=0.0005):
-        self.spread = spread
-        self.commission = commission
-        self.balance = 10000  # الرصيد الافتراضي
-        self.initial_balance = 10000
-        self.positions = []
-        
-    def execute_order(self, price, action, quantity=None, risk_per_trade=0.02, stop_loss_distance=None):
-        # حساب السعر بعد السبريد
-        executed_price = price * (1 + self.spread) if action == "BUY" else price * (1 - self.spread)
-        
-        # حساب حجم المركز بناءً على إدارة المخاطر
-        if quantity is None and stop_loss_distance is not None:
-            risk_amount = self.balance * risk_per_trade
-            quantity = risk_amount / stop_loss_distance
-        
-        # تطبيق العمولة
-        executed_price = executed_price * (1 - self.commission)
-        
-        return executed_price, quantity
+import hashlib
+import os
+import json
+from collections import defaultdict
+import warnings
+warnings.filterwarnings('ignore')
+
+# ============================================
+# 🔧 تحسينات الأداء الذكية
+# ============================================
+
+CACHE_DURATION_DATA = 300
+CACHE_DURATION_ANALYSIS = 600
+RATE_LIMIT_SECONDS = 3
+MAX_CANDLES = 500
+
+@st.cache_resource
+def get_exchange():
+    return ccxt.binance({
+        'rateLimit': 3000,
+        'enableRateLimit': True,
+        'options': {'defaultType': 'spot'}
+    })
+
+@st.cache_data(ttl=CACHE_DURATION_DATA)
+def fetch_candles_cached(symbol, timeframe='1h', limit=500):
+    exchange = get_exchange()
+    try:
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        return df
+    except Exception as e:
+        return None
+
+@st.cache_data(ttl=CACHE_DURATION_ANALYSIS)
+def calculate_indicators_cached(df):
+    if df is None or df.empty:
+        return df
     
-    def update_balance(self, profit):
-        self.balance += profit
-        return self.balance
+    close = df['close'].values
+    high = df['high'].values
+    low = df['low'].values
+    
+    df['RSI'] = talib.RSI(close, timeperiod=14)
+    df['MACD'], df['MACD_signal'], df['MACD_hist'] = talib.MACD(close)
+    df['SMA_20'] = talib.SMA(close, timeperiod=20)
+    df['SMA_50'] = talib.SMA(close, timeperiod=50)
+    df['EMA_100'] = talib.EMA(close, timeperiod=100)
+    df['ATR'] = talib.ATR(high, low, close, timeperiod=14)
+    df['ADX'] = talib.ADX(high, low, close, timeperiod=14)
+    
+    df['BB_upper'], df['BB_middle'], df['BB_lower'] = talib.BBANDS(
+        close, timeperiod=20, nbdevup=2, nbdevdn=2
+    )
+    
+    df['volume_ma'] = talib.SMA(df['volume'], timeperiod=20)
+    df['OBV'] = talib.OBV(df['close'], df['volume'])
+    
+    typical_price = (df['high'] + df['low'] + df['close']) / 3
+    df['VWAP'] = (df['volume'] * typical_price).cumsum() / df['volume'].cumsum()
+    
+    return df.dropna()
 
-class CryptoPredictor2100:
-    def __init__(self):
-        self.exchange = ccxt.binance({
-            'rateLimit': 3000,
-            'enableRateLimit': True,
-            'options': {
-                'defaultType': 'spot'
-            }
-        })
-        self.scalers = {}
-        self.models = {}
-        self.market_simulator = MarketSimulator()
-        self.last_api_call = 0
-        self.current_signal = None
-        self.first_visit = True
-        self.analysis_complete = False
+def check_rate_limit():
+    if 'last_click' not in st.session_state:
+        st.session_state.last_click = 0
+    current_time = time.time()
+    if current_time - st.session_state.last_click < RATE_LIMIT_SECONDS:
+        wait = RATE_LIMIT_SECONDS - (current_time - st.session_state.last_click)
+        st.warning(f"⏳ انتظر {int(wait) + 1} ثواني قبل المحاولة مرة أخرى")
+        return False
+    st.session_state.last_click = current_time
+    return True
 
-    def get_symbol_hash(self, symbol):
-        return hashlib.md5(symbol.encode()).hexdigest()
+# ============================================
+# 🗄️ نظام إدارة المستخدمين
+# ============================================
 
-    def fetch_data(self, symbol, days=30, timeframe='1h'):
-        # تحديد معدل الاستعلام للواجهة البرمجية
-        current_time = time.time()
-        if current_time - self.last_api_call < 60:  # 60 ثانية بين الطلبات
-            time.sleep(60 - (current_time - self.last_api_call))
+class UserManager:
+    def __init__(self, users_file="users.json"):
+        self.users_file = users_file
+        self.users = self._load_users()
+        self.admin_password = "admin123"
         
+    def _load_users(self):
+        if os.path.exists(self.users_file):
+            try:
+                with open(self.users_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except:
+                return {}
+        return {}
+    
+    def _save_users(self):
+        with open(self.users_file, 'w', encoding='utf-8') as f:
+            json.dump(self.users, f, indent=4, ensure_ascii=False)
+    
+    def _hash_password(self, password):
+        return hashlib.sha256(password.encode()).hexdigest()
+    
+    def register_user(self, username, password, email=""):
+        if username in self.users:
+            return False, "❌ اسم المستخدم موجود بالفعل!"
+        if len(username) < 3:
+            return False, "❌ اسم المستخدم يجب أن يكون 3 أحرف على الأقل!"
+        if len(password) < 4:
+            return False, "❌ كلمة المرور يجب أن تكون 4 أحرف على الأقل!"
+        
+        self.users[username] = {
+            "password": self._hash_password(password),
+            "email": email,
+            "active": False,
+            "created_at": datetime.now().isoformat(),
+            "last_login": None,
+            "is_admin": False,
+            "payment_status": "pending",
+            "payment_date": None,
+            "expiry_date": None
+        }
+        
+        if len(self.users) == 1:
+            self.users[username]["is_admin"] = True
+            self.users[username]["active"] = True
+        
+        self._save_users()
+        return True, "✅ تم التسجيل بنجاح! انتظر تفعيل حسابك من قبل المسؤول."
+    
+    def login_user(self, username, password):
+        if username not in self.users:
+            return False, "❌ اسم المستخدم غير موجود!"
+        user = self.users[username]
+        if not user.get("active", False):
+            return False, "⛔ حسابك غير مفعل! يرجى الدفع عبر تلغرام لتفعيل الحساب."
+        if user["password"] != self._hash_password(password):
+            return False, "❌ كلمة مرور خاطئة!"
+        user["last_login"] = datetime.now().isoformat()
+        self._save_users()
+        return True, "✅ تم تسجيل الدخول بنجاح!"
+    
+    def activate_user(self, username):
+        if username not in self.users:
+            return False, "❌ المستخدم غير موجود!"
+        if self.users[username].get("is_admin", False):
+            return False, "❌ المسؤول مفعل تلقائياً!"
+        self.users[username]["active"] = True
+        self.users[username]["payment_status"] = "paid"
+        self.users[username]["payment_date"] = datetime.now().isoformat()
+        expiry = datetime.now() + timedelta(days=30)
+        self.users[username]["expiry_date"] = expiry.isoformat()
+        self._save_users()
+        return True, f"✅ تم تفعيل حساب {username} بنجاح!"
+    
+    def deactivate_user(self, username):
+        if username not in self.users:
+            return False, "❌ المستخدم غير موجود!"
+        if self.users[username].get("is_admin", False):
+            return False, "❌ لا يمكن تعطيل المسؤول!"
+        self.users[username]["active"] = False
+        self.users[username]["payment_status"] = "expired"
+        self._save_users()
+        return True, f"✅ تم تعطيل حساب {username}!"
+    
+    def delete_user(self, username):
+        if username not in self.users:
+            return False, "❌ المستخدم غير موجود!"
+        if self.users[username].get("is_admin", False):
+            admin_count = sum(1 for u in self.users.values() if u.get("is_admin", False))
+            if admin_count <= 1:
+                return False, "❌ لا يمكن حذف المسؤول الوحيد!"
+        del self.users[username]
+        self._save_users()
+        return True, "✅ تم حذف المستخدم بنجاح!"
+    
+    def get_pending_users(self):
+        pending = {}
+        for username, data in self.users.items():
+            if not data.get("is_admin", False) and not data.get("active", False):
+                pending[username] = data
+        return pending
+    
+    def get_active_users(self):
+        active = {}
+        for username, data in self.users.items():
+            if data.get("active", False) and not data.get("is_admin", False):
+                active[username] = data
+        return active
+    
+    def get_all_users(self):
+        return self.users
+    
+    def is_admin(self, username):
+        if username not in self.users:
+            return False
+        return self.users[username].get("is_admin", False)
+
+
+# ============================================
+# 🎯 كاشف مناطق التصفية الصفراء
+# ============================================
+
+class LiquidationZonesDetector:
+    def __init__(self):
+        self.liquidation_zones = {}
+    
+    def detect_liquidation_zones(self, df, timeframe='1h'):
+        if df is None or len(df) < 50:
+            return []
+        
+        zones = []
+        
+        for i in range(2, len(df)-2):
+            current = df.iloc[i]
+            prev = df.iloc[i-1]
+            next_candle = df.iloc[i+1]
+            next_next = df.iloc[i+2]
+            
+            upper_wick = current['high'] - max(current['open'], current['close'])
+            lower_wick = min(current['open'], current['close']) - current['low']
+            body_size = abs(current['close'] - current['open'])
+            candle_range = current['high'] - current['low']
+            
+            avg_volume = df['volume'].iloc[max(0, i-20):i].mean()
+            volume_ratio = current['volume'] / avg_volume if avg_volume > 0 else 1
+            
+            if (current['volume'] > avg_volume * 2 and
+                lower_wick > candle_range * 0.4 and
+                current['close'] > current['open'] and
+                current['low'] < prev['low'] and
+                next_candle['close'] > current['high']):
+                
+                confirmed = next_next['close'] > next_candle['high']
+                
+                zone = {
+                    'price': current['low'],
+                    'timestamp': current.name if hasattr(current, 'name') else i,
+                    'type': 'bullish',
+                    'strength': volume_ratio,
+                    'confirmed': confirmed,
+                    'wick_ratio': lower_wick / candle_range if candle_range > 0 else 0,
+                    'volume_ratio': volume_ratio,
+                    'cluster_size': 1,
+                    'timeframe': timeframe,
+                    'color': 'rgba(255, 255, 0, 0.3)',
+                    'description': '🟢 منطقة تصفية صاعدة - Bullish Liquidation'
+                }
+                zones.append(zone)
+            
+            elif (current['volume'] > avg_volume * 2 and
+                  upper_wick > candle_range * 0.4 and
+                  current['close'] < current['open'] and
+                  current['high'] > prev['high'] and
+                  next_candle['close'] < current['low']):
+                
+                confirmed = next_next['close'] < next_candle['low']
+                
+                zone = {
+                    'price': current['high'],
+                    'timestamp': current.name if hasattr(current, 'name') else i,
+                    'type': 'bearish',
+                    'strength': volume_ratio,
+                    'confirmed': confirmed,
+                    'wick_ratio': upper_wick / candle_range if candle_range > 0 else 0,
+                    'volume_ratio': volume_ratio,
+                    'cluster_size': 1,
+                    'timeframe': timeframe,
+                    'color': 'rgba(255, 255, 0, 0.3)',
+                    'description': '🔴 منطقة تصفية هابطة - Bearish Liquidation'
+                }
+                zones.append(zone)
+        
+        zones = self._cluster_zones(zones, df)
+        zones.sort(key=lambda x: x['strength'], reverse=True)
+        self.liquidation_zones[timeframe] = zones
+        return zones
+    
+    def _cluster_zones(self, zones, df):
+        if len(zones) < 2:
+            return zones
+            
+        prices = np.array([z['price'] for z in zones]).reshape(-1, 1)
+        current_price = df['close'].iloc[-1] if len(df) > 0 else prices.mean()
+        eps = current_price * 0.005
+        
+        clustering = DBSCAN(eps=eps, min_samples=2).fit(prices)
+        labels = clustering.labels_
+        
+        clustered_zones = []
+        unique_labels = set(labels)
+        
+        for label in unique_labels:
+            if label == -1:
+                for i, z in enumerate(zones):
+                    if labels[i] == -1:
+                        clustered_zones.append(z)
+            else:
+                cluster_indices = [i for i, l in enumerate(labels) if l == label]
+                cluster_zones = [zones[i] for i in cluster_indices]
+                
+                merged_zone = {
+                    'price': np.mean([z['price'] for z in cluster_zones]),
+                    'timestamp': max([z['timestamp'] for z in cluster_zones]),
+                    'type': max(set([z['type'] for z in cluster_zones]), key=[z['type'] for z in cluster_zones].count),
+                    'strength': np.mean([z['strength'] for z in cluster_zones]),
+                    'confirmed': any(z['confirmed'] for z in cluster_zones),
+                    'wick_ratio': np.mean([z['wick_ratio'] for z in cluster_zones]),
+                    'volume_ratio': np.mean([z['volume_ratio'] for z in cluster_zones]),
+                    'cluster_size': len(cluster_zones),
+                    'timeframe': cluster_zones[0]['timeframe'],
+                    'color': 'rgba(255, 255, 0, 0.3)',
+                    'description': f"{cluster_zones[0]['description']} (مجموعة {len(cluster_zones)} نقاط)"
+                }
+                clustered_zones.append(merged_zone)
+        
+        return clustered_zones
+
+
+# ============================================
+# 📊 فئة التحليل التقني - جميع الأطر الزمنية مع الخطوط
+# ============================================
+
+class CryptoAnalyzer:
+    def __init__(self):
+        self.exchange = get_exchange()
+        self.blue_liquidity_lines = {}
+        self.white_liquidity_levels = {}
+        self.yellow_liquidation_zones = {}
+        self.blue_liquidity_lines_15m = {}
+        self.white_liquidity_levels_15m = {}
+        self.yellow_liquidation_zones_15m = {}
+        self.blue_liquidity_lines_5m = {}
+        self.white_liquidity_levels_5m = {}
+        self.yellow_liquidation_zones_5m = {}
+        self.blue_liquidity_lines_1m = {}
+        self.white_liquidity_levels_1m = {}
+        self.yellow_liquidation_zones_1m = {}
+        self.blue_liquidity_lines_4h = {}
+        self.white_liquidity_levels_4h = {}
+        self.yellow_liquidation_zones_4h = {}
+        self.orange_magnetic_zones = {}
+        self.orange_magnetic_zones_15m = {}
+        self.orange_magnetic_zones_5m = {}
+        self.orange_magnetic_zones_1m = {}
+        self.orange_magnetic_zones_4h = {}
+        self.liquidation_detector = LiquidationZonesDetector()
+    
+    def fetch_data(self, symbol):
         try:
-            since = self.exchange.parse8601((datetime.now() - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%SZ'))
-            ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=1000)
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            self.last_api_call = time.time()
-            return df
+            df_1h = fetch_candles_cached(symbol, '1h', MAX_CANDLES)
+            df_4h = fetch_candles_cached(symbol, '4h', MAX_CANDLES // 2)
+            
+            if df_1h is not None:
+                df_1h = calculate_indicators_cached(df_1h)
+            if df_4h is not None:
+                df_4h = calculate_indicators_cached(df_4h)
+            
+            if df_1h is not None:
+                current_price = df_1h['close'].iloc[-1]
+                self.calculate_blue_liquidity_lines(df_1h, df_4h, current_price, symbol)
+                self.calculate_white_liquidity_levels(df_1h, df_4h, current_price, symbol)
+                self.calculate_yellow_liquidation_zones(df_1h, symbol)
+                self.calculate_orange_magnetic_zones(df_1h, current_price, symbol)
+            
+            if df_4h is not None:
+                current_price_4h = df_4h['close'].iloc[-1]
+                self.calculate_blue_liquidity_lines_4h(df_4h, current_price_4h, symbol)
+                self.calculate_white_liquidity_levels_4h(df_4h, current_price_4h, symbol)
+                self.calculate_yellow_liquidation_zones_4h(df_4h, symbol)
+                self.calculate_orange_magnetic_zones_4h(df_4h, current_price_4h, symbol)
+                
+                # مناطق التصفية من كاشف التصفية
+                liquidation_zones_4h = self.liquidation_detector.detect_liquidation_zones(df_4h, timeframe='4h')
+                if liquidation_zones_4h:
+                    if symbol not in self.yellow_liquidation_zones_4h:
+                        self.yellow_liquidation_zones_4h[symbol] = []
+                    for zone in liquidation_zones_4h:
+                        zone['color'] = '#FFFF00'
+                        zone['width'] = 2
+                        zone['dash'] = 'dash'
+                        self.yellow_liquidation_zones_4h[symbol].append(zone)
+            
+            return df_1h, df_4h
+            
         except Exception as e:
             st.error(f"خطأ في جلب البيانات لـ {symbol}: {str(e)}")
-            self.last_api_call = time.time()
+            return None, None
+    
+    def fetch_data_15m(self, symbol):
+        try:
+            df_15m = fetch_candles_cached(symbol, '15m', MAX_CANDLES)
+            
+            if df_15m is not None:
+                df_15m = self.calculate_indicators_15m(df_15m)
+            
+            if df_15m is not None:
+                current_price_15m = df_15m['close'].iloc[-1]
+                self.calculate_blue_liquidity_lines_15m(df_15m, current_price_15m, symbol)
+                self.calculate_white_liquidity_levels_15m(df_15m, current_price_15m, symbol)
+                self.calculate_yellow_liquidation_zones_15m(df_15m, symbol)
+                self.calculate_orange_magnetic_zones_15m(df_15m, current_price_15m, symbol)
+                
+                liquidation_zones_15m = self.liquidation_detector.detect_liquidation_zones(df_15m, timeframe='15m')
+                if liquidation_zones_15m:
+                    if symbol not in self.yellow_liquidation_zones_15m:
+                        self.yellow_liquidation_zones_15m[symbol] = []
+                    for zone in liquidation_zones_15m:
+                        zone['color'] = '#FFFF00'
+                        zone['width'] = 2
+                        zone['dash'] = 'dash'
+                        self.yellow_liquidation_zones_15m[symbol].append(zone)
+            
+            return df_15m
+            
+        except Exception as e:
+            st.error(f"خطأ في جلب البيانات 15m لـ {symbol}: {str(e)}")
             return None
-
-    def calculate_indicators(self, df):
+    
+    def fetch_data_5m(self, symbol):
+        try:
+            df_5m = fetch_candles_cached(symbol, '5m', MAX_CANDLES)
+            
+            if df_5m is not None:
+                df_5m = self.calculate_indicators_5m(df_5m)
+            
+            if df_5m is not None:
+                current_price_5m = df_5m['close'].iloc[-1]
+                self.calculate_blue_liquidity_lines_5m(df_5m, current_price_5m, symbol)
+                self.calculate_white_liquidity_levels_5m(df_5m, current_price_5m, symbol)
+                self.calculate_yellow_liquidation_zones_5m(df_5m, symbol)
+                self.calculate_orange_magnetic_zones_5m(df_5m, current_price_5m, symbol)
+                
+                liquidation_zones_5m = self.liquidation_detector.detect_liquidation_zones(df_5m, timeframe='5m')
+                if liquidation_zones_5m:
+                    if symbol not in self.yellow_liquidation_zones_5m:
+                        self.yellow_liquidation_zones_5m[symbol] = []
+                    for zone in liquidation_zones_5m:
+                        zone['color'] = '#FFFF00'
+                        zone['width'] = 2
+                        zone['dash'] = 'dash'
+                        self.yellow_liquidation_zones_5m[symbol].append(zone)
+            
+            return df_5m
+            
+        except Exception as e:
+            st.error(f"خطأ في جلب البيانات 5m لـ {symbol}: {str(e)}")
+            return None
+    
+    def fetch_data_1m(self, symbol):
+        try:
+            df_1m = fetch_candles_cached(symbol, '1m', MAX_CANDLES)
+            
+            if df_1m is not None:
+                df_1m = self.calculate_indicators_1m(df_1m)
+            
+            if df_1m is not None:
+                current_price_1m = df_1m['close'].iloc[-1]
+                self.calculate_blue_liquidity_lines_1m(df_1m, current_price_1m, symbol)
+                self.calculate_white_liquidity_levels_1m(df_1m, current_price_1m, symbol)
+                self.calculate_yellow_liquidation_zones_1m(df_1m, symbol)
+                self.calculate_orange_magnetic_zones_1m(df_1m, current_price_1m, symbol)
+                
+                liquidation_zones_1m = self.liquidation_detector.detect_liquidation_zones(df_1m, timeframe='1m')
+                if liquidation_zones_1m:
+                    if symbol not in self.yellow_liquidation_zones_1m:
+                        self.yellow_liquidation_zones_1m[symbol] = []
+                    for zone in liquidation_zones_1m:
+                        zone['color'] = '#FFFF00'
+                        zone['width'] = 2
+                        zone['dash'] = 'dash'
+                        self.yellow_liquidation_zones_1m[symbol].append(zone)
+            
+            return df_1m
+            
+        except Exception as e:
+            st.error(f"خطأ في جلب البيانات 1m لـ {symbol}: {str(e)}")
+            return None
+    
+    def calculate_indicators_15m(self, df):
         if df.empty:
             return df
-            
+        
         close = df['close'].values
         high = df['high'].values
         low = df['low'].values
-        volume = df['volume'].values
         
-        # المؤشرات الفنية
         df['RSI'] = talib.RSI(close, timeperiod=14)
         df['MACD'], df['MACD_signal'], df['MACD_hist'] = talib.MACD(close)
-        df['BB_upper'], df['BB_middle'], df['BB_lower'] = talib.BBANDS(close)
-        df['ATR'] = talib.ATR(high, low, close, timeperiod=14)
         df['SMA_20'] = talib.SMA(close, timeperiod=20)
-        df['SMA_50'] = talib.SMA(close, timeperiod=50)
-        df['EMA_100'] = talib.EMA(close, timeperiod=100)
+        df['EMA_50'] = talib.EMA(close, timeperiod=50)
+        df['ATR'] = talib.ATR(high, low, close, timeperiod=14)
         
-        # متوسط السعر المرجح بحجم التداول
-        df['VWAP'] = (df['volume'] * (df['high'] + df['low'] + df['close']) / 3).cumsum() / df['volume'].cumsum()
+        df['BB_upper'], df['BB_middle'], df['BB_lower'] = talib.BBANDS(
+            close, timeperiod=20, nbdevup=2, nbdevdn=2
+        )
         
-        # مؤشر RSI للحجم
-        df['VRSI'] = talib.RSI(df['volume'], timeperiod=14)
-        
-        # مناطق الحجم الكبير
-        df['volume_ma'] = talib.SMA(volume, timeperiod=20)
-        df['high_volume'] = df['volume'] > df['volume_ma'] * 1.5
-        
-        # مؤشر RSI المرجح
-        df['WRSI'] = talib.RSI(df['close'] * df['volume'], timeperiod=14)
-        
-        # مؤشر ADX
-        df['ADX'] = talib.ADX(high, low, close, timeperiod=14)
-        
-        # المؤشر العشوائي
-        df['slowk'], df['slowd'] = talib.STOCH(high, low, close)
+        typical_price = (df['high'] + df['low'] + df['close']) / 3
+        df['VWAP'] = (df['volume'] * typical_price).cumsum() / df['volume'].cumsum()
         
         return df.dropna()
-
-    def assess_volatility(self, df):
-        """تقييم مستوى التقلب في السوق"""
-        volatility = {
-            'level': 'low',
-            'score': 0,
-            'indicators': {}
-        }
-        
+    
+    def calculate_indicators_5m(self, df):
         if df.empty:
-            return volatility
+            return df
+        
+        close = df['close'].values
+        high = df['high'].values
+        low = df['low'].values
+        
+        df['RSI'] = talib.RSI(close, timeperiod=14)
+        df['MACD'], df['MACD_signal'], df['MACD_hist'] = talib.MACD(close)
+        df['SMA_10'] = talib.SMA(close, timeperiod=10)
+        df['SMA_20'] = talib.SMA(close, timeperiod=20)
+        df['EMA_30'] = talib.EMA(close, timeperiod=30)
+        df['ATR'] = talib.ATR(high, low, close, timeperiod=10)
+        
+        df['BB_upper'], df['BB_middle'], df['BB_lower'] = talib.BBANDS(
+            close, timeperiod=20, nbdevup=1.5, nbdevdn=1.5
+        )
+        
+        typical_price = (df['high'] + df['low'] + df['close']) / 3
+        df['VWAP'] = (df['volume'] * typical_price).cumsum() / df['volume'].cumsum()
+        
+        return df.dropna()
+    
+    def calculate_indicators_1m(self, df):
+        if df.empty:
+            return df
+        
+        close = df['close'].values
+        high = df['high'].values
+        low = df['low'].values
+        
+        df['RSI'] = talib.RSI(close, timeperiod=7)
+        df['MACD'], df['MACD_signal'], df['MACD_hist'] = talib.MACD(close, fastperiod=5, slowperiod=13, signalperiod=5)
+        df['SMA_5'] = talib.SMA(close, timeperiod=5)
+        df['SMA_10'] = talib.SMA(close, timeperiod=10)
+        df['EMA_15'] = talib.EMA(close, timeperiod=15)
+        df['ATR'] = talib.ATR(high, low, close, timeperiod=5)
+        
+        df['BB_upper'], df['BB_middle'], df['BB_lower'] = talib.BBANDS(
+            close, timeperiod=20, nbdevup=1.2, nbdevdn=1.2
+        )
+        
+        typical_price = (df['high'] + df['low'] + df['close']) / 3
+        df['VWAP'] = (df['volume'] * typical_price).cumsum() / df['volume'].cumsum()
+        
+        return df.dropna()
+    
+    def calculate_orange_magnetic_zones(self, df, current_price, symbol):
+        orange_zones = []
+        
+        if df is None or len(df) < 100:
+            self.orange_magnetic_zones[symbol] = orange_zones
+            return
+        
+        close_prices = df['close'].values
+        returns = np.diff(close_prices) / close_prices[:-1]
+        price_velocity = np.mean(np.abs(returns[-20:])) * 100
+        
+        turning_points = []
+        for i in range(2, len(df)-2):
+            if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
+                df['high'].iloc[i] > df['high'].iloc[i+1] and
+                df['close'].iloc[i] > df['open'].iloc[i]):
+                turning_points.append(df['high'].iloc[i])
             
-        # 1. تقييم ATR
-        atr = df['ATR'].iloc[-1]
-        atr_avg = df['ATR'].mean()
-        atr_ratio = atr / atr_avg
-        volatility['indicators']['ATR'] = {
-            'value': atr,
-            'ratio': atr_ratio,
-            'assessment': 'high' if atr_ratio > 1.5 else 'medium' if atr_ratio > 1.2 else 'low'
-        }
+            if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
+                df['low'].iloc[i] < df['low'].iloc[i+1] and
+                df['close'].iloc[i] < df['open'].iloc[i]):
+                turning_points.append(df['low'].iloc[i])
         
-        # 2. عرض باند بولينجر
-        bb_width = (df['BB_upper'].iloc[-1] - df['BB_lower'].iloc[-1]) / df['BB_middle'].iloc[-1]
-        bb_width_avg = ((df['BB_upper'] - df['BB_lower']) / df['BB_middle']).mean()
-        bb_width_ratio = bb_width / bb_width_avg
-        volatility['indicators']['BB_Width'] = {
-            'value': bb_width,
-            'ratio': bb_width_ratio,
-            'assessment': 'high' if bb_width_ratio > 1.5 else 'medium' if bb_width_ratio > 1.2 else 'low'
-        }
+        if len(turning_points) < 5:
+            self.orange_magnetic_zones[symbol] = orange_zones
+            return
         
-        # 3. تغير السعر في آخر 4 ساعات
-        price_change = abs(df['close'].iloc[-1] - df['close'].iloc[-4]) / df['close'].iloc[-4] * 100
-        volatility['indicators']['Price_Change_4h'] = {
-            'value': price_change,
-            'assessment': 'high' if price_change > 3 else 'medium' if price_change > 1.5 else 'low'
-        }
+        turning_points = np.array(turning_points[-30:]).reshape(-1, 1)
         
-        # 4. حجم تداول غير طبيعي
-        volume_ratio = df['volume'].iloc[-1] / df['volume_ma'].iloc[-1]
-        volatility['indicators']['Volume_Spike'] = {
-            'value': volume_ratio,
-            'assessment': 'high' if volume_ratio > 2 else 'medium' if volume_ratio > 1.5 else 'low'
-        }
+        if len(turning_points) >= 3:
+            kmeans = KMeans(n_clusters=min(3, len(turning_points)//3), random_state=42, n_init=10)
+            clusters = kmeans.fit_predict(turning_points)
+            
+            unique_clusters = np.unique(clusters)
+            for cluster_id in unique_clusters:
+                cluster_points = turning_points[clusters == cluster_id]
+                if len(cluster_points) >= 2:
+                    center_price = np.mean(cluster_points)
+                    points_density = len(cluster_points) / (np.std(cluster_points) + 1)
+                    distance_pct = abs(center_price - current_price) / current_price * 100
+                    strength = min(points_density / 10, 1.0) * (1 - distance_pct / 10)
+                    
+                    if center_price > current_price:
+                        attraction_direction = "جذب لأعلى"
+                    else:
+                        attraction_direction = "جذب لأسفل"
+                    
+                    if distance_pct < price_velocity * 2:
+                        orange_zones.append({
+                            'price': float(center_price),
+                            'type': 'magnetic_zone',
+                            'strength': float(strength),
+                            'distance_pct': distance_pct,
+                            'price_velocity': price_velocity,
+                            'points_count': len(cluster_points),
+                            'attraction_direction': attraction_direction,
+                            'description': f'🧲 منطقة جذب مغناطيسي ({attraction_direction})',
+                            'color': 'rgba(255, 165, 0, 0.5)',
+                            'width': 2 + strength * 2,
+                            'dash': 'dot' if strength < 0.5 else 'solid'
+                        })
         
-        # حساب النتيجة الكلية
-        high_count = sum(1 for ind in volatility['indicators'].values() if ind['assessment'] == 'high')
-        med_count = sum(1 for ind in volatility['indicators'].values() if ind['assessment'] == 'medium')
+        orange_zones.sort(key=lambda x: x['strength'], reverse=True)
+        self.orange_magnetic_zones[symbol] = orange_zones[:5]
+    
+    def calculate_orange_magnetic_zones_15m(self, df, current_price, symbol):
+        orange_zones = []
         
-        volatility_score = high_count * 2 + med_count * 1
-        volatility['score'] = volatility_score
+        if df is None or len(df) < 100:
+            self.orange_magnetic_zones_15m[symbol] = orange_zones
+            return
         
-        if volatility_score >= 4:
-            volatility['level'] = 'extreme'
-        elif volatility_score >= 3:
-            volatility['level'] = 'high'
-        elif volatility_score >= 2:
-            volatility['level'] = 'medium'
-        else:
-            volatility['level'] = 'low'
+        close_prices = df['close'].values
+        returns = np.diff(close_prices) / close_prices[:-1]
+        price_velocity = np.mean(np.abs(returns[-30:])) * 100
         
-        return volatility
-
-    def find_support_resistance(self, df, window=24):
+        turning_points = []
+        for i in range(2, len(df)-2):
+            if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
+                df['high'].iloc[i] > df['high'].iloc[i+1] and
+                df['close'].iloc[i] > df['open'].iloc[i]):
+                turning_points.append(df['high'].iloc[i])
+            
+            if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
+                df['low'].iloc[i] < df['low'].iloc[i+1] and
+                df['close'].iloc[i] < df['open'].iloc[i]):
+                turning_points.append(df['low'].iloc[i])
+        
+        if len(turning_points) < 5:
+            self.orange_magnetic_zones_15m[symbol] = orange_zones
+            return
+        
+        turning_points = np.array(turning_points[-40:]).reshape(-1, 1)
+        
+        if len(turning_points) >= 3:
+            kmeans = KMeans(n_clusters=min(4, len(turning_points)//3), random_state=42, n_init=10)
+            clusters = kmeans.fit_predict(turning_points)
+            
+            unique_clusters = np.unique(clusters)
+            for cluster_id in unique_clusters:
+                cluster_points = turning_points[clusters == cluster_id]
+                if len(cluster_points) >= 2:
+                    center_price = np.mean(cluster_points)
+                    points_density = len(cluster_points) / (np.std(cluster_points) + 1)
+                    distance_pct = abs(center_price - current_price) / current_price * 100
+                    strength = min(points_density / 10, 1.0) * (1 - distance_pct / 8)
+                    
+                    if center_price > current_price:
+                        attraction_direction = "جذب لأعلى"
+                    else:
+                        attraction_direction = "جذب لأسفل"
+                    
+                    if distance_pct < price_velocity * 2:
+                        orange_zones.append({
+                            'price': float(center_price),
+                            'type': 'magnetic_zone_15m',
+                            'strength': float(strength),
+                            'distance_pct': distance_pct,
+                            'price_velocity': price_velocity,
+                            'points_count': len(cluster_points),
+                            'attraction_direction': attraction_direction,
+                            'description': f'🧲 منطقة جذب مغناطيسي 15m ({attraction_direction})',
+                            'color': 'rgba(255, 165, 0, 0.5)',
+                            'width': 2 + strength * 2,
+                            'dash': 'dot' if strength < 0.5 else 'solid'
+                        })
+        
+        orange_zones.sort(key=lambda x: x['strength'], reverse=True)
+        self.orange_magnetic_zones_15m[symbol] = orange_zones[:5]
+    
+    def calculate_orange_magnetic_zones_5m(self, df, current_price, symbol):
+        orange_zones = []
+        
+        if df is None or len(df) < 80:
+            self.orange_magnetic_zones_5m[symbol] = orange_zones
+            return
+        
+        close_prices = df['close'].values
+        returns = np.diff(close_prices) / close_prices[:-1]
+        price_velocity = np.mean(np.abs(returns[-40:])) * 100
+        
+        turning_points = []
+        for i in range(2, len(df)-2):
+            if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
+                df['high'].iloc[i] > df['high'].iloc[i+1] and
+                df['close'].iloc[i] > df['open'].iloc[i]):
+                turning_points.append(df['high'].iloc[i])
+            
+            if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
+                df['low'].iloc[i] < df['low'].iloc[i+1] and
+                df['close'].iloc[i] < df['open'].iloc[i]):
+                turning_points.append(df['low'].iloc[i])
+        
+        if len(turning_points) < 5:
+            self.orange_magnetic_zones_5m[symbol] = orange_zones
+            return
+        
+        turning_points = np.array(turning_points[-50:]).reshape(-1, 1)
+        
+        if len(turning_points) >= 3:
+            kmeans = KMeans(n_clusters=min(5, len(turning_points)//3), random_state=42, n_init=10)
+            clusters = kmeans.fit_predict(turning_points)
+            
+            unique_clusters = np.unique(clusters)
+            for cluster_id in unique_clusters:
+                cluster_points = turning_points[clusters == cluster_id]
+                if len(cluster_points) >= 2:
+                    center_price = np.mean(cluster_points)
+                    points_density = len(cluster_points) / (np.std(cluster_points) + 1)
+                    distance_pct = abs(center_price - current_price) / current_price * 100
+                    strength = min(points_density / 10, 1.0) * (1 - distance_pct / 5)
+                    
+                    if center_price > current_price:
+                        attraction_direction = "جذب لأعلى"
+                    else:
+                        attraction_direction = "جذب لأسفل"
+                    
+                    if distance_pct < price_velocity * 2:
+                        orange_zones.append({
+                            'price': float(center_price),
+                            'type': 'magnetic_zone_5m',
+                            'strength': float(strength),
+                            'distance_pct': distance_pct,
+                            'price_velocity': price_velocity,
+                            'points_count': len(cluster_points),
+                            'attraction_direction': attraction_direction,
+                            'description': f'🧲 منطقة جذب مغناطيسي 5m ({attraction_direction})',
+                            'color': 'rgba(255, 165, 0, 0.5)',
+                            'width': 2 + strength * 2,
+                            'dash': 'dot' if strength < 0.5 else 'solid'
+                        })
+        
+        orange_zones.sort(key=lambda x: x['strength'], reverse=True)
+        self.orange_magnetic_zones_5m[symbol] = orange_zones[:6]
+    
+    def calculate_orange_magnetic_zones_1m(self, df, current_price, symbol):
+        orange_zones = []
+        
+        if df is None or len(df) < 60:
+            self.orange_magnetic_zones_1m[symbol] = orange_zones
+            return
+        
+        close_prices = df['close'].values
+        returns = np.diff(close_prices) / close_prices[:-1]
+        price_velocity = np.mean(np.abs(returns[-50:])) * 100
+        
+        turning_points = []
+        for i in range(2, len(df)-2):
+            if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
+                df['high'].iloc[i] > df['high'].iloc[i+1] and
+                df['close'].iloc[i] > df['open'].iloc[i]):
+                turning_points.append(df['high'].iloc[i])
+            
+            if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
+                df['low'].iloc[i] < df['low'].iloc[i+1] and
+                df['close'].iloc[i] < df['open'].iloc[i]):
+                turning_points.append(df['low'].iloc[i])
+        
+        if len(turning_points) < 5:
+            self.orange_magnetic_zones_1m[symbol] = orange_zones
+            return
+        
+        turning_points = np.array(turning_points[-60:]).reshape(-1, 1)
+        
+        if len(turning_points) >= 3:
+            kmeans = KMeans(n_clusters=min(6, len(turning_points)//3), random_state=42, n_init=10)
+            clusters = kmeans.fit_predict(turning_points)
+            
+            unique_clusters = np.unique(clusters)
+            for cluster_id in unique_clusters:
+                cluster_points = turning_points[clusters == cluster_id]
+                if len(cluster_points) >= 2:
+                    center_price = np.mean(cluster_points)
+                    points_density = len(cluster_points) / (np.std(cluster_points) + 1)
+                    distance_pct = abs(center_price - current_price) / current_price * 100
+                    strength = min(points_density / 10, 1.0) * (1 - distance_pct / 3)
+                    
+                    if center_price > current_price:
+                        attraction_direction = "جذب لأعلى"
+                    else:
+                        attraction_direction = "جذب لأسفل"
+                    
+                    if distance_pct < price_velocity * 1.5:
+                        orange_zones.append({
+                            'price': float(center_price),
+                            'type': 'magnetic_zone_1m',
+                            'strength': float(strength),
+                            'distance_pct': distance_pct,
+                            'price_velocity': price_velocity,
+                            'points_count': len(cluster_points),
+                            'attraction_direction': attraction_direction,
+                            'description': f'🧲 منطقة جذب مغناطيسي 1m ({attraction_direction})',
+                            'color': 'rgba(255, 165, 0, 0.5)',
+                            'width': 1.5 + strength * 2,
+                            'dash': 'dot' if strength < 0.5 else 'solid'
+                        })
+        
+        orange_zones.sort(key=lambda x: x['strength'], reverse=True)
+        self.orange_magnetic_zones_1m[symbol] = orange_zones[:7]
+    
+    def calculate_orange_magnetic_zones_4h(self, df, current_price, symbol):
+        orange_zones = []
+        
+        if df is None or len(df) < 50:
+            self.orange_magnetic_zones_4h[symbol] = orange_zones
+            return
+        
+        close_prices = df['close'].values
+        returns = np.diff(close_prices) / close_prices[:-1]
+        price_velocity = np.mean(np.abs(returns[-15:])) * 100
+        
+        turning_points = []
+        for i in range(2, len(df)-2):
+            if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
+                df['high'].iloc[i] > df['high'].iloc[i+1] and
+                df['close'].iloc[i] > df['open'].iloc[i]):
+                turning_points.append(df['high'].iloc[i])
+            
+            if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
+                df['low'].iloc[i] < df['low'].iloc[i+1] and
+                df['close'].iloc[i] < df['open'].iloc[i]):
+                turning_points.append(df['low'].iloc[i])
+        
+        if len(turning_points) < 5:
+            self.orange_magnetic_zones_4h[symbol] = orange_zones
+            return
+        
+        turning_points = np.array(turning_points[-20:]).reshape(-1, 1)
+        
+        if len(turning_points) >= 3:
+            kmeans = KMeans(n_clusters=min(3, len(turning_points)//3), random_state=42, n_init=10)
+            clusters = kmeans.fit_predict(turning_points)
+            
+            unique_clusters = np.unique(clusters)
+            for cluster_id in unique_clusters:
+                cluster_points = turning_points[clusters == cluster_id]
+                if len(cluster_points) >= 2:
+                    center_price = np.mean(cluster_points)
+                    points_density = len(cluster_points) / (np.std(cluster_points) + 1)
+                    distance_pct = abs(center_price - current_price) / current_price * 100
+                    strength = min(points_density / 10, 1.0) * (1 - distance_pct / 15)
+                    
+                    if center_price > current_price:
+                        attraction_direction = "جذب لأعلى"
+                    else:
+                        attraction_direction = "جذب لأسفل"
+                    
+                    if distance_pct < price_velocity * 2:
+                        orange_zones.append({
+                            'price': float(center_price),
+                            'type': 'magnetic_zone_4h',
+                            'strength': float(strength),
+                            'distance_pct': distance_pct,
+                            'price_velocity': price_velocity,
+                            'points_count': len(cluster_points),
+                            'attraction_direction': attraction_direction,
+                            'description': f'🧲 منطقة جذب مغناطيسي 4H ({attraction_direction})',
+                            'color': 'rgba(255, 165, 0, 0.5)',
+                            'width': 2 + strength * 2,
+                            'dash': 'dot' if strength < 0.5 else 'solid'
+                        })
+        
+        orange_zones.sort(key=lambda x: x['strength'], reverse=True)
+        self.orange_magnetic_zones_4h[symbol] = orange_zones[:4]
+    
+    def calculate_yellow_liquidation_zones(self, df, symbol):
+        yellow_zones = []
+        
+        if df is None or len(df) < 50:
+            self.yellow_liquidation_zones[symbol] = yellow_zones
+            return
+        
+        current_price = df['close'].iloc[-1]
+        
+        if len(df) >= 100:
+            high_idx = argrelextrema(df['high'].values, np.greater, order=10)[0]
+            low_idx = argrelextrema(df['low'].values, np.less, order=10)[0]
+            
+            support_levels = []
+            for idx in low_idx[-10:]:
+                price = df['low'].iloc[idx]
+                distance_pct = abs(price - current_price) / current_price * 100
+                if distance_pct <= 5:
+                    touches = 0
+                    for i in range(max(0, idx-5), min(len(df), idx+5)):
+                        if abs(df['low'].iloc[i] - price) <= price * 0.005:
+                            touches += 1
+                    
+                    strength = min(touches / 5, 1.0)
+                    support_levels.append((price, strength))
+            
+            resistance_levels = []
+            for idx in high_idx[-10:]:
+                price = df['high'].iloc[idx]
+                distance_pct = abs(price - current_price) / current_price * 100
+                if distance_pct <= 5:
+                    touches = 0
+                    for i in range(max(0, idx-5), min(len(df), idx+5)):
+                        if abs(df['high'].iloc[i] - price) <= price * 0.005:
+                            touches += 1
+                    
+                    strength = min(touches / 5, 1.0)
+                    resistance_levels.append((price, strength))
+            
+            for price, strength in support_levels[:3]:
+                yellow_zones.append({
+                    'price': price,
+                    'type': 'support_zone',
+                    'strength': strength,
+                    'volume': 0,
+                    'description': f'🟡 منطقة دعم صفراء (قوة: {strength:.2f})',
+                    'color': '#FFFF00',
+                    'width': 1 + (strength * 2),
+                    'dash': 'dash',
+                    'distance_pct': abs(price - current_price) / current_price * 100
+                })
+            
+            for price, strength in resistance_levels[:3]:
+                yellow_zones.append({
+                    'price': price,
+                    'type': 'resistance_zone',
+                    'strength': strength,
+                    'volume': 0,
+                    'description': f'🟡 منطقة مقاومة صفراء (قوة: {strength:.2f})',
+                    'color': '#FFFF00',
+                    'width': 1 + (strength * 2),
+                    'dash': 'dash',
+                    'distance_pct': abs(price - current_price) / current_price * 100
+                })
+        
+        yellow_zones.sort(key=lambda x: x['strength'], reverse=True)
+        self.yellow_liquidation_zones[symbol] = yellow_zones[:5]
+    
+    def calculate_yellow_liquidation_zones_15m(self, df, symbol):
+        yellow_zones = []
+        
+        if df is None or len(df) < 50:
+            self.yellow_liquidation_zones_15m[symbol] = yellow_zones
+            return
+        
+        current_price = df['close'].iloc[-1]
+        
+        if len(df) >= 100:
+            high_idx = argrelextrema(df['high'].values, np.greater, order=8)[0]
+            low_idx = argrelextrema(df['low'].values, np.less, order=8)[0]
+            
+            support_levels = []
+            for idx in low_idx[-15:]:
+                price = df['low'].iloc[idx]
+                distance_pct = abs(price - current_price) / current_price * 100
+                if distance_pct <= 3:
+                    touches = 0
+                    for i in range(max(0, idx-3), min(len(df), idx+3)):
+                        if abs(df['low'].iloc[i] - price) <= price * 0.003:
+                            touches += 1
+                    
+                    strength = min(touches / 3, 1.0)
+                    support_levels.append((price, strength))
+            
+            resistance_levels = []
+            for idx in high_idx[-15:]:
+                price = df['high'].iloc[idx]
+                distance_pct = abs(price - current_price) / current_price * 100
+                if distance_pct <= 3:
+                    touches = 0
+                    for i in range(max(0, idx-3), min(len(df), idx+3)):
+                        if abs(df['high'].iloc[i] - price) <= price * 0.003:
+                            touches += 1
+                    
+                    strength = min(touches / 3, 1.0)
+                    resistance_levels.append((price, strength))
+            
+            for price, strength in support_levels[:4]:
+                yellow_zones.append({
+                    'price': price,
+                    'type': 'support_zone_15m',
+                    'strength': strength,
+                    'volume': 0,
+                    'description': f'🟡 منطقة دعم 15m صفراء (قوة: {strength:.2f})',
+                    'color': '#FFFF00',
+                    'width': 1 + (strength * 2),
+                    'dash': 'dash',
+                    'distance_pct': abs(price - current_price) / current_price * 100
+                })
+            
+            for price, strength in resistance_levels[:4]:
+                yellow_zones.append({
+                    'price': price,
+                    'type': 'resistance_zone_15m',
+                    'strength': strength,
+                    'volume': 0,
+                    'description': f'🟡 منطقة مقاومة 15m صفراء (قوة: {strength:.2f})',
+                    'color': '#FFFF00',
+                    'width': 1 + (strength * 2),
+                    'dash': 'dash',
+                    'distance_pct': abs(price - current_price) / current_price * 100
+                })
+        
+        yellow_zones.sort(key=lambda x: x['strength'], reverse=True)
+        self.yellow_liquidation_zones_15m[symbol] = yellow_zones[:5]
+    
+    def calculate_yellow_liquidation_zones_5m(self, df, symbol):
+        yellow_zones = []
+        
+        if df is None or len(df) < 30:
+            self.yellow_liquidation_zones_5m[symbol] = yellow_zones
+            return
+        
+        current_price = df['close'].iloc[-1]
+        
+        if len(df) >= 80:
+            high_idx = argrelextrema(df['high'].values, np.greater, order=5)[0]
+            low_idx = argrelextrema(df['low'].values, np.less, order=5)[0]
+            
+            support_levels = []
+            for idx in low_idx[-20:]:
+                price = df['low'].iloc[idx]
+                distance_pct = abs(price - current_price) / current_price * 100
+                if distance_pct <= 2:
+                    touches = 0
+                    for i in range(max(0, idx-2), min(len(df), idx+2)):
+                        if abs(df['low'].iloc[i] - price) <= price * 0.002:
+                            touches += 1
+                    
+                    strength = min(touches / 2, 1.0)
+                    support_levels.append((price, strength))
+            
+            resistance_levels = []
+            for idx in high_idx[-20:]:
+                price = df['high'].iloc[idx]
+                distance_pct = abs(price - current_price) / current_price * 100
+                if distance_pct <= 2:
+                    touches = 0
+                    for i in range(max(0, idx-2), min(len(df), idx+2)):
+                        if abs(df['high'].iloc[i] - price) <= price * 0.002:
+                            touches += 1
+                    
+                    strength = min(touches / 2, 1.0)
+                    resistance_levels.append((price, strength))
+            
+            for price, strength in support_levels[:5]:
+                yellow_zones.append({
+                    'price': price,
+                    'type': 'support_zone_5m',
+                    'strength': strength,
+                    'volume': 0,
+                    'description': f'🟡 منطقة دعم 5m صفراء (قوة: {strength:.2f})',
+                    'color': '#FFFF00',
+                    'width': 1 + (strength * 2),
+                    'dash': 'dash',
+                    'distance_pct': abs(price - current_price) / current_price * 100
+                })
+            
+            for price, strength in resistance_levels[:5]:
+                yellow_zones.append({
+                    'price': price,
+                    'type': 'resistance_zone_5m',
+                    'strength': strength,
+                    'volume': 0,
+                    'description': f'🟡 منطقة مقاومة 5m صفراء (قوة: {strength:.2f})',
+                    'color': '#FFFF00',
+                    'width': 1 + (strength * 2),
+                    'dash': 'dash',
+                    'distance_pct': abs(price - current_price) / current_price * 100
+                })
+        
+        yellow_zones.sort(key=lambda x: x['strength'], reverse=True)
+        self.yellow_liquidation_zones_5m[symbol] = yellow_zones[:6]
+    
+    def calculate_yellow_liquidation_zones_1m(self, df, symbol):
+        yellow_zones = []
+        
+        if df is None or len(df) < 30:
+            self.yellow_liquidation_zones_1m[symbol] = yellow_zones
+            return
+        
+        current_price = df['close'].iloc[-1]
+        
+        if len(df) >= 60:
+            high_idx = argrelextrema(df['high'].values, np.greater, order=3)[0]
+            low_idx = argrelextrema(df['low'].values, np.less, order=3)[0]
+            
+            support_levels = []
+            for idx in low_idx[-25:]:
+                price = df['low'].iloc[idx]
+                distance_pct = abs(price - current_price) / current_price * 100
+                if distance_pct <= 1.5:
+                    touches = 0
+                    for i in range(max(0, idx-1), min(len(df), idx+2)):
+                        if abs(df['low'].iloc[i] - price) <= price * 0.0015:
+                            touches += 1
+                    
+                    strength = min(touches / 2, 1.0)
+                    support_levels.append((price, strength))
+            
+            resistance_levels = []
+            for idx in high_idx[-25:]:
+                price = df['high'].iloc[idx]
+                distance_pct = abs(price - current_price) / current_price * 100
+                if distance_pct <= 1.5:
+                    touches = 0
+                    for i in range(max(0, idx-1), min(len(df), idx+2)):
+                        if abs(df['high'].iloc[i] - price) <= price * 0.0015:
+                            touches += 1
+                    
+                    strength = min(touches / 2, 1.0)
+                    resistance_levels.append((price, strength))
+            
+            for price, strength in support_levels[:6]:
+                yellow_zones.append({
+                    'price': price,
+                    'type': 'support_zone_1m',
+                    'strength': strength,
+                    'volume': 0,
+                    'description': f'🟡 منطقة دعم 1m صفراء (قوة: {strength:.2f})',
+                    'color': '#FFFF00',
+                    'width': 1 + (strength * 1.5),
+                    'dash': 'dash',
+                    'distance_pct': abs(price - current_price) / current_price * 100
+                })
+            
+            for price, strength in resistance_levels[:6]:
+                yellow_zones.append({
+                    'price': price,
+                    'type': 'resistance_zone_1m',
+                    'strength': strength,
+                    'volume': 0,
+                    'description': f'🟡 منطقة مقاومة 1m صفراء (قوة: {strength:.2f})',
+                    'color': '#FFFF00',
+                    'width': 1 + (strength * 1.5),
+                    'dash': 'dash',
+                    'distance_pct': abs(price - current_price) / current_price * 100
+                })
+        
+        yellow_zones.sort(key=lambda x: x['strength'], reverse=True)
+        self.yellow_liquidation_zones_1m[symbol] = yellow_zones[:8]
+    
+    def calculate_yellow_liquidation_zones_4h(self, df, symbol):
+        yellow_zones = []
+        
+        if df is None or len(df) < 50:
+            self.yellow_liquidation_zones_4h[symbol] = yellow_zones
+            return
+        
+        current_price = df['close'].iloc[-1]
+        
+        if len(df) >= 100:
+            high_idx = argrelextrema(df['high'].values, np.greater, order=15)[0]
+            low_idx = argrelextrema(df['low'].values, np.less, order=15)[0]
+            
+            support_levels = []
+            for idx in low_idx[-8:]:
+                price = df['low'].iloc[idx]
+                distance_pct = abs(price - current_price) / current_price * 100
+                if distance_pct <= 8:
+                    touches = 0
+                    for i in range(max(0, idx-3), min(len(df), idx+3)):
+                        if abs(df['low'].iloc[i] - price) <= price * 0.008:
+                            touches += 1
+                    
+                    strength = min(touches / 3, 1.0)
+                    support_levels.append((price, strength))
+            
+            resistance_levels = []
+            for idx in high_idx[-8:]:
+                price = df['high'].iloc[idx]
+                distance_pct = abs(price - current_price) / current_price * 100
+                if distance_pct <= 8:
+                    touches = 0
+                    for i in range(max(0, idx-3), min(len(df), idx+3)):
+                        if abs(df['high'].iloc[i] - price) <= price * 0.008:
+                            touches += 1
+                    
+                    strength = min(touches / 3, 1.0)
+                    resistance_levels.append((price, strength))
+            
+            for price, strength in support_levels[:3]:
+                yellow_zones.append({
+                    'price': price,
+                    'type': 'support_zone_4h',
+                    'strength': strength,
+                    'volume': 0,
+                    'description': f'🟡 منطقة دعم 4H صفراء (قوة: {strength:.2f})',
+                    'color': '#FFFF00',
+                    'width': 1 + (strength * 2),
+                    'dash': 'dash',
+                    'distance_pct': abs(price - current_price) / current_price * 100
+                })
+            
+            for price, strength in resistance_levels[:3]:
+                yellow_zones.append({
+                    'price': price,
+                    'type': 'resistance_zone_4h',
+                    'strength': strength,
+                    'volume': 0,
+                    'description': f'🟡 منطقة مقاومة 4H صفراء (قوة: {strength:.2f})',
+                    'color': '#FFFF00',
+                    'width': 1 + (strength * 2),
+                    'dash': 'dash',
+                    'distance_pct': abs(price - current_price) / current_price * 100
+                })
+        
+        yellow_zones.sort(key=lambda x: x['strength'], reverse=True)
+        self.yellow_liquidation_zones_4h[symbol] = yellow_zones[:5]
+    
+    def calculate_blue_liquidity_lines(self, df_1h, df_4h, current_price, symbol):
+        blue_lines = []
+        
+        if df_1h is None or len(df_1h) < 50:
+            self.blue_liquidity_lines[symbol] = blue_lines
+            return
+        
+        for i in range(max(0, len(df_1h)-20), len(df_1h)-1):
+            candle = df_1h.iloc[i]
+            next_candle = df_1h.iloc[i+1]
+            
+            upper_wick = candle['high'] - max(candle['open'], candle['close'])
+            lower_wick = min(candle['open'], candle['close']) - candle['low']
+            body_size = abs(candle['close'] - candle['open'])
+            total_range = candle['high'] - candle['low']
+            
+            if total_range == 0:
+                continue
+            
+            if (lower_wick > body_size * 2 and 
+                upper_wick < body_size * 0.5 and
+                next_candle['close'] > candle['close']):
+                
+                blue_lines.append({
+                    'price': candle['low'],
+                    'type': 'buy_liquidity',
+                    'strength': min(0.8 + (lower_wick/total_range), 0.95),
+                    'timeframe': 'immediate',
+                    'description': '🔵 رفض شرائي قوي (مطرقة)',
+                    'color': '#1E90FF',
+                    'width': 2 + (lower_wick/total_range * 3),
+                    'dash': 'solid',
+                    'wick_ratio': lower_wick/total_range
+                })
+            
+            if (upper_wick > body_size * 2 and 
+                lower_wick < body_size * 0.5 and
+                next_candle['close'] < candle['close']):
+                
+                blue_lines.append({
+                    'price': candle['high'],
+                    'type': 'sell_liquidity',
+                    'strength': min(0.8 + (upper_wick/total_range), 0.95),
+                    'timeframe': 'immediate',
+                    'description': '🔵 رفض بيعي قوي (رجل مشنوق)',
+                    'color': '#1E90FF',
+                    'width': 2 + (upper_wick/total_range * 3),
+                    'dash': 'solid',
+                    'wick_ratio': upper_wick/total_range
+                })
+            
+            if (body_size / total_range < 0.1 and
+                max(upper_wick, lower_wick) > body_size * 3):
+                
+                if next_candle['close'] > candle['close']:
+                    blue_lines.append({
+                        'price': candle['low'],
+                        'type': 'buy_liquidity',
+                        'strength': 0.6,
+                        'timeframe': 'immediate',
+                        'description': '🔵 دعم عند دوجي',
+                        'color': '#1E90FF',
+                        'width': 1.5,
+                        'dash': 'dot'
+                    })
+                else:
+                    blue_lines.append({
+                        'price': candle['high'],
+                        'type': 'sell_liquidity',
+                        'strength': 0.6,
+                        'timeframe': 'immediate',
+                        'description': '🔵 مقاومة عند دوجي',
+                        'color': '#1E90FF',
+                        'width': 1.5,
+                        'dash': 'dot'
+                    })
+        
+        lookback = min(50, len(df_1h))
+        price_tolerance = current_price * 0.02
+        
+        local_highs = []
+        for i in range(1, lookback-1):
+            if (df_1h['high'].iloc[i] > df_1h['high'].iloc[i-1] and 
+                df_1h['high'].iloc[i] > df_1h['high'].iloc[i+1]):
+                local_highs.append(df_1h['high'].iloc[i])
+        
+        local_lows = []
+        for i in range(1, lookback-1):
+            if (df_1h['low'].iloc[i] < df_1h['low'].iloc[i-1] and 
+                df_1h['low'].iloc[i] < df_1h['low'].iloc[i+1]):
+                local_lows.append(df_1h['low'].iloc[i])
+        
+        for high_price in local_highs[:5]:
+            if abs(high_price - current_price) <= price_tolerance:
+                blue_lines.append({
+                    'price': high_price,
+                    'type': 'sell_liquidity',
+                    'strength': 0.7,
+                    'timeframe': 'near',
+                    'description': '🔵 مقاومة قريبة',
+                    'color': '#00BFFF',
+                    'width': 2,
+                    'dash': 'dash'
+                })
+        
+        for low_price in local_lows[:5]:
+            if abs(low_price - current_price) <= price_tolerance:
+                blue_lines.append({
+                    'price': low_price,
+                    'type': 'buy_liquidity',
+                    'strength': 0.7,
+                    'timeframe': 'near',
+                    'description': '🔵 دعم قريب',
+                    'color': '#00BFFF',
+                    'width': 2,
+                    'dash': 'dash'
+                })
+        
+        unique_lines = []
+        seen_prices = set()
+        for line in blue_lines:
+            if line['price'] not in seen_prices:
+                seen_prices.add(line['price'])
+                unique_lines.append(line)
+        
+        self.blue_liquidity_lines[symbol] = unique_lines
+    
+    def calculate_blue_liquidity_lines_15m(self, df_15m, current_price, symbol):
+        blue_lines = []
+        
+        if df_15m is None or len(df_15m) < 50:
+            self.blue_liquidity_lines_15m[symbol] = blue_lines
+            return
+        
+        for i in range(max(0, len(df_15m)-30), len(df_15m)-1):
+            candle = df_15m.iloc[i]
+            next_candle = df_15m.iloc[i+1]
+            
+            upper_wick = candle['high'] - max(candle['open'], candle['close'])
+            lower_wick = min(candle['open'], candle['close']) - candle['low']
+            body_size = abs(candle['close'] - candle['open'])
+            total_range = candle['high'] - candle['low']
+            
+            if total_range == 0:
+                continue
+            
+            if (lower_wick > body_size * 2 and 
+                upper_wick < body_size * 0.3 and
+                next_candle['close'] > candle['close']):
+                
+                blue_lines.append({
+                    'price': candle['low'],
+                    'type': 'buy_liquidity_15m',
+                    'strength': min(0.8 + (lower_wick/total_range), 0.95),
+                    'timeframe': 'immediate_15m',
+                    'description': '🔵 رفض شرائي 15m قوي (مطرقة)',
+                    'color': '#1E90FF',
+                    'width': 2 + (lower_wick/total_range * 3),
+                    'dash': 'solid',
+                    'wick_ratio': lower_wick/total_range
+                })
+            
+            if (upper_wick > body_size * 2 and 
+                lower_wick < body_size * 0.3 and
+                next_candle['close'] < candle['close']):
+                
+                blue_lines.append({
+                    'price': candle['high'],
+                    'type': 'sell_liquidity_15m',
+                    'strength': min(0.8 + (upper_wick/total_range), 0.95),
+                    'timeframe': 'immediate_15m',
+                    'description': '🔵 رفض بيعي 15m قوي (رجل مشنوق)',
+                    'color': '#1E90FF',
+                    'width': 2 + (upper_wick/total_range * 3),
+                    'dash': 'solid',
+                    'wick_ratio': upper_wick/total_range
+                })
+        
+        lookback = min(80, len(df_15m))
+        price_tolerance = current_price * 0.01
+        
+        local_highs = []
+        for i in range(1, lookback-1):
+            if (df_15m['high'].iloc[i] > df_15m['high'].iloc[i-1] and 
+                df_15m['high'].iloc[i] > df_15m['high'].iloc[i+1]):
+                local_highs.append(df_15m['high'].iloc[i])
+        
+        local_lows = []
+        for i in range(1, lookback-1):
+            if (df_15m['low'].iloc[i] < df_15m['low'].iloc[i-1] and 
+                df_15m['low'].iloc[i] < df_15m['low'].iloc[i+1]):
+                local_lows.append(df_15m['low'].iloc[i])
+        
+        for high_price in local_highs[:8]:
+            if abs(high_price - current_price) <= price_tolerance:
+                blue_lines.append({
+                    'price': high_price,
+                    'type': 'sell_liquidity_15m',
+                    'strength': 0.7,
+                    'timeframe': 'near_15m',
+                    'description': '🔵 مقاومة 15m قريبة',
+                    'color': '#00BFFF',
+                    'width': 2,
+                    'dash': 'dash'
+                })
+        
+        for low_price in local_lows[:8]:
+            if abs(low_price - current_price) <= price_tolerance:
+                blue_lines.append({
+                    'price': low_price,
+                    'type': 'buy_liquidity_15m',
+                    'strength': 0.7,
+                    'timeframe': 'near_15m',
+                    'description': '🔵 دعم 15m قريب',
+                    'color': '#00BFFF',
+                    'width': 2,
+                    'dash': 'dash'
+                })
+        
+        unique_lines = []
+        seen_prices = set()
+        for line in blue_lines:
+            if line['price'] not in seen_prices:
+                seen_prices.add(line['price'])
+                unique_lines.append(line)
+        
+        self.blue_liquidity_lines_15m[symbol] = unique_lines
+    
+    def calculate_blue_liquidity_lines_5m(self, df_5m, current_price, symbol):
+        blue_lines = []
+        
+        if df_5m is None or len(df_5m) < 30:
+            self.blue_liquidity_lines_5m[symbol] = blue_lines
+            return
+        
+        for i in range(max(0, len(df_5m)-40), len(df_5m)-1):
+            candle = df_5m.iloc[i]
+            next_candle = df_5m.iloc[i+1]
+            
+            upper_wick = candle['high'] - max(candle['open'], candle['close'])
+            lower_wick = min(candle['open'], candle['close']) - candle['low']
+            body_size = abs(candle['close'] - candle['open'])
+            total_range = candle['high'] - candle['low']
+            
+            if total_range == 0:
+                continue
+            
+            if (lower_wick > body_size * 1.8 and 
+                upper_wick < body_size * 0.4 and
+                next_candle['close'] > candle['close']):
+                
+                blue_lines.append({
+                    'price': candle['low'],
+                    'type': 'buy_liquidity_5m',
+                    'strength': min(0.8 + (lower_wick/total_range), 0.95),
+                    'timeframe': 'immediate_5m',
+                    'description': '🔵 رفض شرائي 5m قوي (مطرقة)',
+                    'color': '#1E90FF',
+                    'width': 2 + (lower_wick/total_range * 3),
+                    'dash': 'solid',
+                    'wick_ratio': lower_wick/total_range
+                })
+            
+            if (upper_wick > body_size * 1.8 and 
+                lower_wick < body_size * 0.4 and
+                next_candle['close'] < candle['close']):
+                
+                blue_lines.append({
+                    'price': candle['high'],
+                    'type': 'sell_liquidity_5m',
+                    'strength': min(0.8 + (upper_wick/total_range), 0.95),
+                    'timeframe': 'immediate_5m',
+                    'description': '🔵 رفض بيعي 5m قوي (رجل مشنوق)',
+                    'color': '#1E90FF',
+                    'width': 2 + (upper_wick/total_range * 3),
+                    'dash': 'solid',
+                    'wick_ratio': upper_wick/total_range
+                })
+            
+            if (body_size / total_range < 0.15 and
+                max(upper_wick, lower_wick) > body_size * 2):
+                
+                if next_candle['close'] > candle['close']:
+                    blue_lines.append({
+                        'price': candle['low'],
+                        'type': 'buy_liquidity_5m',
+                        'strength': 0.6,
+                        'timeframe': 'immediate_5m',
+                        'description': '🔵 دعم 5m عند دوجي',
+                        'color': '#1E90FF',
+                        'width': 1.5,
+                        'dash': 'dot'
+                    })
+                else:
+                    blue_lines.append({
+                        'price': candle['high'],
+                        'type': 'sell_liquidity_5m',
+                        'strength': 0.6,
+                        'timeframe': 'immediate_5m',
+                        'description': '🔵 مقاومة 5m عند دوجي',
+                        'color': '#1E90FF',
+                        'width': 1.5,
+                        'dash': 'dot'
+                    })
+        
+        lookback = min(100, len(df_5m))
+        price_tolerance = current_price * 0.005
+        
+        local_highs = []
+        for i in range(2, lookback-2):
+            if (df_5m['high'].iloc[i] > df_5m['high'].iloc[i-1] and 
+                df_5m['high'].iloc[i] > df_5m['high'].iloc[i-2] and
+                df_5m['high'].iloc[i] > df_5m['high'].iloc[i+1] and
+                df_5m['high'].iloc[i] > df_5m['high'].iloc[i+2]):
+                local_highs.append(df_5m['high'].iloc[i])
+        
+        local_lows = []
+        for i in range(2, lookback-2):
+            if (df_5m['low'].iloc[i] < df_5m['low'].iloc[i-1] and 
+                df_5m['low'].iloc[i] < df_5m['low'].iloc[i-2] and
+                df_5m['low'].iloc[i] < df_5m['low'].iloc[i+1] and
+                df_5m['low'].iloc[i] < df_5m['low'].iloc[i+2]):
+                local_lows.append(df_5m['low'].iloc[i])
+        
+        for high_price in local_highs[:10]:
+            if abs(high_price - current_price) <= price_tolerance:
+                blue_lines.append({
+                    'price': high_price,
+                    'type': 'sell_liquidity_5m',
+                    'strength': 0.7,
+                    'timeframe': 'near_5m',
+                    'description': '🔵 مقاومة 5m قريبة',
+                    'color': '#00BFFF',
+                    'width': 2,
+                    'dash': 'dash'
+                })
+        
+        for low_price in local_lows[:10]:
+            if abs(low_price - current_price) <= price_tolerance:
+                blue_lines.append({
+                    'price': low_price,
+                    'type': 'buy_liquidity_5m',
+                    'strength': 0.7,
+                    'timeframe': 'near_5m',
+                    'description': '🔵 دعم 5m قريب',
+                    'color': '#00BFFF',
+                    'width': 2,
+                    'dash': 'dash'
+                })
+        
+        unique_lines = []
+        seen_prices = set()
+        for line in blue_lines:
+            if line['price'] not in seen_prices:
+                seen_prices.add(line['price'])
+                unique_lines.append(line)
+        
+        self.blue_liquidity_lines_5m[symbol] = unique_lines
+    
+    def calculate_blue_liquidity_lines_1m(self, df_1m, current_price, symbol):
+        blue_lines = []
+        
+        if df_1m is None or len(df_1m) < 30:
+            self.blue_liquidity_lines_1m[symbol] = blue_lines
+            return
+        
+        for i in range(max(0, len(df_1m)-50), len(df_1m)-1):
+            candle = df_1m.iloc[i]
+            next_candle = df_1m.iloc[i+1]
+            
+            upper_wick = candle['high'] - max(candle['open'], candle['close'])
+            lower_wick = min(candle['open'], candle['close']) - candle['low']
+            body_size = abs(candle['close'] - candle['open'])
+            total_range = candle['high'] - candle['low']
+            
+            if total_range == 0:
+                continue
+            
+            if (lower_wick > body_size * 1.5 and 
+                upper_wick < body_size * 0.5 and
+                next_candle['close'] > candle['close']):
+                
+                blue_lines.append({
+                    'price': candle['low'],
+                    'type': 'buy_liquidity_1m',
+                    'strength': min(0.7 + (lower_wick/total_range), 0.9),
+                    'timeframe': 'immediate_1m',
+                    'description': '🔵 رفض شرائي 1m سريع',
+                    'color': '#1E90FF',
+                    'width': 1.5 + (lower_wick/total_range * 2),
+                    'dash': 'solid',
+                    'wick_ratio': lower_wick/total_range
+                })
+            
+            if (upper_wick > body_size * 1.5 and 
+                lower_wick < body_size * 0.5 and
+                next_candle['close'] < candle['close']):
+                
+                blue_lines.append({
+                    'price': candle['high'],
+                    'type': 'sell_liquidity_1m',
+                    'strength': min(0.7 + (upper_wick/total_range), 0.9),
+                    'timeframe': 'immediate_1m',
+                    'description': '🔵 رفض بيعي 1m سريع',
+                    'color': '#1E90FF',
+                    'width': 1.5 + (upper_wick/total_range * 2),
+                    'dash': 'solid',
+                    'wick_ratio': upper_wick/total_range
+                })
+            
+            if (body_size / total_range < 0.2 and
+                max(upper_wick, lower_wick) > body_size * 1.5):
+                
+                if next_candle['close'] > candle['close']:
+                    blue_lines.append({
+                        'price': candle['low'],
+                        'type': 'buy_liquidity_1m',
+                        'strength': 0.55,
+                        'timeframe': 'immediate_1m',
+                        'description': '🔵 دعم 1m سريع',
+                        'color': '#1E90FF',
+                        'width': 1.2,
+                        'dash': 'dot'
+                    })
+                else:
+                    blue_lines.append({
+                        'price': candle['high'],
+                        'type': 'sell_liquidity_1m',
+                        'strength': 0.55,
+                        'timeframe': 'immediate_1m',
+                        'description': '🔵 مقاومة 1m سريعة',
+                        'color': '#1E90FF',
+                        'width': 1.2,
+                        'dash': 'dot'
+                    })
+        
+        lookback = min(120, len(df_1m))
+        price_tolerance = current_price * 0.0025
+        
+        local_highs = []
+        for i in range(2, lookback-2):
+            if (df_1m['high'].iloc[i] > df_1m['high'].iloc[i-1] and 
+                df_1m['high'].iloc[i] > df_1m['high'].iloc[i+1]):
+                local_highs.append(df_1m['high'].iloc[i])
+        
+        local_lows = []
+        for i in range(2, lookback-2):
+            if (df_1m['low'].iloc[i] < df_1m['low'].iloc[i-1] and 
+                df_1m['low'].iloc[i] < df_1m['low'].iloc[i+1]):
+                local_lows.append(df_1m['low'].iloc[i])
+        
+        for high_price in local_highs[:12]:
+            if abs(high_price - current_price) <= price_tolerance:
+                blue_lines.append({
+                    'price': high_price,
+                    'type': 'sell_liquidity_1m',
+                    'strength': 0.65,
+                    'timeframe': 'near_1m',
+                    'description': '🔵 مقاومة 1m قريبة',
+                    'color': '#00BFFF',
+                    'width': 1.8,
+                    'dash': 'dash'
+                })
+        
+        for low_price in local_lows[:12]:
+            if abs(low_price - current_price) <= price_tolerance:
+                blue_lines.append({
+                    'price': low_price,
+                    'type': 'buy_liquidity_1m',
+                    'strength': 0.65,
+                    'timeframe': 'near_1m',
+                    'description': '🔵 دعم 1m قريب',
+                    'color': '#00BFFF',
+                    'width': 1.8,
+                    'dash': 'dash'
+                })
+        
+        unique_lines = []
+        seen_prices = set()
+        for line in blue_lines:
+            if line['price'] not in seen_prices:
+                seen_prices.add(line['price'])
+                unique_lines.append(line)
+        
+        self.blue_liquidity_lines_1m[symbol] = unique_lines
+    
+    def calculate_blue_liquidity_lines_4h(self, df_4h, current_price, symbol):
+        blue_lines = []
+        
+        if df_4h is None or len(df_4h) < 30:
+            self.blue_liquidity_lines_4h[symbol] = blue_lines
+            return
+        
+        for i in range(max(0, len(df_4h)-15), len(df_4h)-1):
+            candle = df_4h.iloc[i]
+            next_candle = df_4h.iloc[i+1]
+            
+            upper_wick = candle['high'] - max(candle['open'], candle['close'])
+            lower_wick = min(candle['open'], candle['close']) - candle['low']
+            body_size = abs(candle['close'] - candle['open'])
+            total_range = candle['high'] - candle['low']
+            
+            if total_range == 0:
+                continue
+            
+            if (lower_wick > body_size * 2 and 
+                upper_wick < body_size * 0.5 and
+                next_candle['close'] > candle['close']):
+                
+                blue_lines.append({
+                    'price': candle['low'],
+                    'type': 'buy_liquidity_4h',
+                    'strength': min(0.8 + (lower_wick/total_range), 0.95),
+                    'timeframe': 'immediate_4h',
+                    'description': '🔵 رفض شرائي 4H قوي (مطرقة)',
+                    'color': '#1E90FF',
+                    'width': 2 + (lower_wick/total_range * 3),
+                    'dash': 'solid',
+                    'wick_ratio': lower_wick/total_range
+                })
+            
+            if (upper_wick > body_size * 2 and 
+                lower_wick < body_size * 0.5 and
+                next_candle['close'] < candle['close']):
+                
+                blue_lines.append({
+                    'price': candle['high'],
+                    'type': 'sell_liquidity_4h',
+                    'strength': min(0.8 + (upper_wick/total_range), 0.95),
+                    'timeframe': 'immediate_4h',
+                    'description': '🔵 رفض بيعي 4H قوي (رجل مشنوق)',
+                    'color': '#1E90FF',
+                    'width': 2 + (upper_wick/total_range * 3),
+                    'dash': 'solid',
+                    'wick_ratio': upper_wick/total_range
+                })
+        
+        lookback = min(30, len(df_4h))
+        price_tolerance = current_price * 0.03
+        
+        local_highs = []
+        for i in range(1, lookback-1):
+            if (df_4h['high'].iloc[i] > df_4h['high'].iloc[i-1] and 
+                df_4h['high'].iloc[i] > df_4h['high'].iloc[i+1]):
+                local_highs.append(df_4h['high'].iloc[i])
+        
+        local_lows = []
+        for i in range(1, lookback-1):
+            if (df_4h['low'].iloc[i] < df_4h['low'].iloc[i-1] and 
+                df_4h['low'].iloc[i] < df_4h['low'].iloc[i+1]):
+                local_lows.append(df_4h['low'].iloc[i])
+        
+        for high_price in local_highs[:5]:
+            if abs(high_price - current_price) <= price_tolerance:
+                blue_lines.append({
+                    'price': high_price,
+                    'type': 'sell_liquidity_4h',
+                    'strength': 0.7,
+                    'timeframe': 'near_4h',
+                    'description': '🔵 مقاومة 4H قريبة',
+                    'color': '#00BFFF',
+                    'width': 2,
+                    'dash': 'dash'
+                })
+        
+        for low_price in local_lows[:5]:
+            if abs(low_price - current_price) <= price_tolerance:
+                blue_lines.append({
+                    'price': low_price,
+                    'type': 'buy_liquidity_4h',
+                    'strength': 0.7,
+                    'timeframe': 'near_4h',
+                    'description': '🔵 دعم 4H قريب',
+                    'color': '#00BFFF',
+                    'width': 2,
+                    'dash': 'dash'
+                })
+        
+        unique_lines = []
+        seen_prices = set()
+        for line in blue_lines:
+            if line['price'] not in seen_prices:
+                seen_prices.add(line['price'])
+                unique_lines.append(line)
+        
+        self.blue_liquidity_lines_4h[symbol] = unique_lines
+    
+    def calculate_white_liquidity_levels(self, df_1h, df_4h, current_price, symbol):
+        white_levels = []
+        
+        if df_1h is None or df_4h is None:
+            self.white_liquidity_levels[symbol] = white_levels
+            return
+        
+        support_4h, resistance_4h = self.find_strong_support_resistance(df_4h, window=12)
+        
+        for price, strength in support_4h[:3]:
+            if strength > 0.7:
+                distance_pct = abs(price - current_price) / current_price * 100
+                if distance_pct <= 5:
+                    white_levels.append({
+                        'price': price,
+                        'type': 'strong_support',
+                        'strength': strength,
+                        'description': f'⚪ دعم قوي 4H (قوة: {strength:.2f})',
+                        'color': 'white',
+                        'width': 1 + (strength * 2),
+                        'dash': 'dash'
+                    })
+        
+        for price, strength in resistance_4h[:3]:
+            if strength > 0.7:
+                distance_pct = abs(price - current_price) / current_price * 100
+                if distance_pct <= 5:
+                    white_levels.append({
+                        'price': price,
+                        'type': 'strong_resistance',
+                        'strength': strength,
+                        'description': f'⚪ مقاومة قوي 4H (قوة: {strength:.2f})',
+                        'color': 'white',
+                        'width': 1 + (strength * 2),
+                        'dash': 'dash'
+                    })
+        
+        self.white_liquidity_levels[symbol] = white_levels
+    
+    def calculate_white_liquidity_levels_15m(self, df_15m, current_price, symbol):
+        white_levels = []
+        
+        if df_15m is None:
+            self.white_liquidity_levels_15m[symbol] = white_levels
+            return
+        
+        support_15m, resistance_15m = self.find_strong_support_resistance_15m(df_15m, window=15)
+        
+        for price, strength in support_15m[:4]:
+            if strength > 0.6:
+                distance_pct = abs(price - current_price) / current_price * 100
+                if distance_pct <= 3:
+                    white_levels.append({
+                        'price': price,
+                        'type': 'strong_support_15m',
+                        'strength': strength,
+                        'description': f'⚪ دعم قوي 15m (قوة: {strength:.2f})',
+                        'color': 'white',
+                        'width': 1 + (strength * 2),
+                        'dash': 'dash'
+                    })
+        
+        for price, strength in resistance_15m[:4]:
+            if strength > 0.6:
+                distance_pct = abs(price - current_price) / current_price * 100
+                if distance_pct <= 3:
+                    white_levels.append({
+                        'price': price,
+                        'type': 'strong_resistance_15m',
+                        'strength': strength,
+                        'description': f'⚪ مقاومة قوي 15m (قوة: {strength:.2f})',
+                        'color': 'white',
+                        'width': 1 + (strength * 2),
+                        'dash': 'dash'
+                    })
+        
+        self.white_liquidity_levels_15m[symbol] = white_levels
+    
+    def calculate_white_liquidity_levels_5m(self, df_5m, current_price, symbol):
+        white_levels = []
+        
+        if df_5m is None:
+            self.white_liquidity_levels_5m[symbol] = white_levels
+            return
+        
+        support_5m, resistance_5m = self.find_strong_support_resistance_5m(df_5m, window=10)
+        
+        for price, strength in support_5m[:5]:
+            if strength > 0.55:
+                distance_pct = abs(price - current_price) / current_price * 100
+                if distance_pct <= 2:
+                    white_levels.append({
+                        'price': price,
+                        'type': 'strong_support_5m',
+                        'strength': strength,
+                        'description': f'⚪ دعم قوي 5m (قوة: {strength:.2f})',
+                        'color': 'white',
+                        'width': 1 + (strength * 2),
+                        'dash': 'dash'
+                    })
+        
+        for price, strength in resistance_5m[:5]:
+            if strength > 0.55:
+                distance_pct = abs(price - current_price) / current_price * 100
+                if distance_pct <= 2:
+                    white_levels.append({
+                        'price': price,
+                        'type': 'strong_resistance_5m',
+                        'strength': strength,
+                        'description': f'⚪ مقاومة قوي 5m (قوة: {strength:.2f})',
+                        'color': 'white',
+                        'width': 1 + (strength * 2),
+                        'dash': 'dash'
+                    })
+        
+        self.white_liquidity_levels_5m[symbol] = white_levels
+    
+    def calculate_white_liquidity_levels_1m(self, df_1m, current_price, symbol):
+        white_levels = []
+        
+        if df_1m is None:
+            self.white_liquidity_levels_1m[symbol] = white_levels
+            return
+        
+        support_1m, resistance_1m = self.find_strong_support_resistance_1m(df_1m, window=7)
+        
+        for price, strength in support_1m[:6]:
+            if strength > 0.5:
+                distance_pct = abs(price - current_price) / current_price * 100
+                if distance_pct <= 1.5:
+                    white_levels.append({
+                        'price': price,
+                        'type': 'strong_support_1m',
+                        'strength': strength,
+                        'description': f'⚪ دعم قوي 1m (قوة: {strength:.2f})',
+                        'color': 'white',
+                        'width': 1 + (strength * 1.5),
+                        'dash': 'dash'
+                    })
+        
+        for price, strength in resistance_1m[:6]:
+            if strength > 0.5:
+                distance_pct = abs(price - current_price) / current_price * 100
+                if distance_pct <= 1.5:
+                    white_levels.append({
+                        'price': price,
+                        'type': 'strong_resistance_1m',
+                        'strength': strength,
+                        'description': f'⚪ مقاومة قوي 1m (قوة: {strength:.2f})',
+                        'color': 'white',
+                        'width': 1 + (strength * 1.5),
+                        'dash': 'dash'
+                    })
+        
+        self.white_liquidity_levels_1m[symbol] = white_levels
+    
+    def calculate_white_liquidity_levels_4h(self, df_4h, current_price, symbol):
+        white_levels = []
+        
+        if df_4h is None:
+            self.white_liquidity_levels_4h[symbol] = white_levels
+            return
+        
+        support_4h, resistance_4h = self.find_strong_support_resistance(df_4h, window=20)
+        
+        for price, strength in support_4h[:3]:
+            if strength > 0.7:
+                distance_pct = abs(price - current_price) / current_price * 100
+                if distance_pct <= 8:
+                    white_levels.append({
+                        'price': price,
+                        'type': 'strong_support_4h',
+                        'strength': strength,
+                        'description': f'⚪ دعم قوي 4H (قوة: {strength:.2f})',
+                        'color': 'white',
+                        'width': 1 + (strength * 2),
+                        'dash': 'dash'
+                    })
+        
+        for price, strength in resistance_4h[:3]:
+            if strength > 0.7:
+                distance_pct = abs(price - current_price) / current_price * 100
+                if distance_pct <= 8:
+                    white_levels.append({
+                        'price': price,
+                        'type': 'strong_resistance_4h',
+                        'strength': strength,
+                        'description': f'⚪ مقاومة قوي 4H (قوة: {strength:.2f})',
+                        'color': 'white',
+                        'width': 1 + (strength * 2),
+                        'dash': 'dash'
+                    })
+        
+        self.white_liquidity_levels_4h[symbol] = white_levels
+    
+    def find_strong_support_resistance(self, df, window=20):
         if len(df) < window * 2:
             return [], []
-            
-        # إيجاد القمم والقيعان المحلية
+        
         high_idx = argrelextrema(df['high'].values, np.greater, order=window)[0]
         low_idx = argrelextrema(df['low'].values, np.less, order=window)[0]
         
-        # تجميع المستويات القريبة باستخدام DBSCAN
-        def cluster_levels(levels, threshold=0.005):
+        def cluster_and_score(levels, price_data, is_support=True):
             if len(levels) == 0:
                 return []
             
-            levels_2d = np.array(levels).reshape(-1, 1)
-            eps = np.mean(levels) * threshold
-            db = DBSCAN(eps=eps, min_samples=2).fit(levels_2d)
-            labels = db.labels_
+            eps_value = np.std(levels) * 0.5
+            
+            if eps_value <= 0:
+                eps_value = np.mean(levels) * 0.005
+            
+            eps_value = max(eps_value, np.mean(levels) * 0.001)
+            
+            levels_array = np.array(levels).reshape(-1, 1)
+            
+            try:
+                db = DBSCAN(eps=float(eps_value), min_samples=2).fit(levels_array)
+                labels = db.labels_
+            except Exception as e:
+                print(f"DBSCAN failed: {e}, using simple clustering")
+                labels = np.zeros(len(levels))
             
             clusters = {}
-            for i, level in enumerate(levels):
-                label = labels[i]
+            for i, label in enumerate(labels):
                 if label not in clusters:
                     clusters[label] = []
-                clusters[label].append(level)
+                clusters[label].append(levels[i])
             
-            clustered_levels = []
-            for label, group in clusters.items():
+            scored_clusters = []
+            for label, cluster in clusters.items():
                 if label != -1:
-                    clustered_levels.append(np.mean(group))
+                    avg_price = np.mean(cluster)
+                    
+                    if is_support:
+                        touches = len(price_data[
+                            (price_data['low'] <= avg_price * 1.005) & 
+                            (price_data['low'] >= avg_price * 0.995)
+                        ])
+                    else:
+                        touches = len(price_data[
+                            (price_data['high'] >= avg_price * 0.995) & 
+                            (price_data['high'] <= avg_price * 1.005)
+                        ])
+                    
+                    volume_mask = (price_data['close'] >= avg_price * 0.99) & (price_data['close'] <= avg_price * 1.01)
+                    volume_score = price_data.loc[volume_mask, 'volume'].mean() / price_data['volume'].mean() if not price_data['volume'].mean() == 0 else 1
+                    
+                    strength = min((touches * 0.4) + (volume_score * 0.6), 1.0)
+                    scored_clusters.append((avg_price, strength, len(cluster)))
             
-            return clustered_levels
+            scored_clusters.sort(key=lambda x: x[1], reverse=True)
+            return [(price, strength) for price, strength, _ in scored_clusters]
         
-        support_levels = df.iloc[low_idx]['low'].values
-        resistance_levels = df.iloc[high_idx]['high'].values
+        support_levels = df.iloc[low_idx]['low'].values if len(low_idx) > 0 else []
+        resistance_levels = df.iloc[high_idx]['high'].values if len(high_idx) > 0 else []
         
-        support_clusters = cluster_levels(support_levels)
-        resistance_clusters = cluster_levels(resistance_levels)
+        support = cluster_and_score(support_levels, df, is_support=True)
+        resistance = cluster_and_score(resistance_levels, df, is_support=False)
         
-        # تقييم قوة المستويات
-        def score_levels(levels, df, is_support=True):
-            scored = []
-            for level in levels:
-                if is_support:
-                    touches = len(df[(df['low'] <= level * 1.005) & (df['low'] >= level * 0.995)])
-                    volume_at_level = df[(df['low'] <= level * 1.005) & (df['low'] >= level * 0.995)]['volume'].mean()
-                else:
-                    touches = len(df[(df['high'] >= level * 0.995) & (df['high'] <= level * 1.005)])
-                    volume_at_level = df[(df['high'] >= level * 0.995) & (df['high'] <= level * 1.005)]['volume'].mean()
-                
-                score = touches * 0.6 + (volume_at_level / df['volume'].mean()) * 0.4
-                scored.append((level, score, touches))
+        return support[:5], resistance[:5]
+    
+    def find_strong_support_resistance_15m(self, df, window=15):
+        if len(df) < window * 2:
+            return [], []
+        
+        high_idx = argrelextrema(df['high'].values, np.greater, order=window)[0]
+        low_idx = argrelextrema(df['low'].values, np.less, order=window)[0]
+        
+        def cluster_and_score(levels, price_data, is_support=True):
+            if len(levels) == 0:
+                return []
             
-            scored.sort(key=lambda x: x[1], reverse=True)
-            return [x[:2] for x in scored[:3]]  # level, strength
-        
-        support = score_levels(support_clusters, df, is_support=True)
-        resistance = score_levels(resistance_clusters, df, is_support=False)
-        
-        return support, resistance
-
-    def find_liquidity_zones(self, df):
-        if df.empty or len(df[df['high_volume']]) < 10:
-            return []
+            eps_value = np.std(levels) * 0.3
             
-        high_volume_df = df[df['high_volume']]
-        liquidity_zones = []
-        
-        from sklearn.cluster import KMeans
-        X = high_volume_df[['close', 'volume']].values
-        kmeans = KMeans(n_clusters=3, random_state=42).fit(X)
-        high_volume_df['cluster'] = kmeans.labels_
-        
-        for cluster in range(3):
-            cluster_data = high_volume_df[high_volume_df['cluster'] == cluster]
-            if len(cluster_data) > 0:
-                min_price = cluster_data['close'].min()
-                max_price = cluster_data['close'].max()
-                total_volume = cluster_data['volume'].sum()
-                liquidity_zones.append({
-                    'range': (min_price, max_price),
-                    'volume': total_volume,
-                    'volume_pct': total_volume / high_volume_df['volume'].sum() * 100
-                })
-        
-        liquidity_zones.sort(key=lambda x: x['volume'], reverse=True)
-        zones = [x['range'] for x in liquidity_zones[:3]]
-        
-        return zones
-
-    def prepare_data(self, df):
-        if df.empty or len(df) < 24:
-            return np.array([]), np.array([]), None
+            if eps_value <= 0:
+                eps_value = np.mean(levels) * 0.003
             
-        scaler = MinMaxScaler()
-        scaled_data = scaler.fit_transform(df[['close']])
-        
-        X, y = [], []
-        look_back = 24
-        
-        for i in range(look_back, len(scaled_data)):
-            X.append(scaled_data[i-look_back:i, 0])
-            y.append(scaled_data[i, 0])
+            eps_value = max(eps_value, np.mean(levels) * 0.001)
             
-        return np.array(X), np.array(y), scaler
-
-    def train_model(self, symbol, df):
-        try:
-            X, y, scaler = self.prepare_data(df)
+            levels_array = np.array(levels).reshape(-1, 1)
             
-            if len(X) == 0 or len(y) == 0:
-                st.warning("لا توجد بيانات كافية لتدريب النموذج")
-                return None, None
-                
-            X = X.reshape(X.shape[0], X.shape[1], 1)
-            
-            model = Sequential([
-                LSTM(128, return_sequences=True, input_shape=(X.shape[1], 1)),
-                Dropout(0.3),
-                LSTM(64, return_sequences=True),
-                Dropout(0.2),
-                LSTM(32),
-                Dropout(0.1),
-                Dense(1)
-            ])
-            
-            model.compile(optimizer='adam', loss='mse')
-            model.fit(X, y, epochs=50, batch_size=32, verbose=0)
-            
-            symbol_hash = self.get_symbol_hash(symbol)
-            model.save(f'models/{symbol_hash}_model.h5')
-            joblib.dump(scaler, f'models/{symbol_hash}_scaler.pkl')
-            
-            return model, scaler
-        except Exception as e:
-            st.error(f"خطأ في تدريب النموذج: {str(e)}")
-            return None, None
-
-    def load_model(self, symbol):
-        symbol_hash = self.get_symbol_hash(symbol)
-        model_path = f'models/{symbol_hash}_model.h5'
-        scaler_path = f'models/{symbol_hash}_scaler.pkl'
-        
-        if os.path.exists(model_path) and os.path.exists(scaler_path):
             try:
-                model = load_model(model_path)
-                scaler = joblib.load(scaler_path)
-                return model, scaler
-            except:
-                return None, None
-        return None, None
-
-    def predict(self, symbol, df):
-        model, scaler = self.load_model(symbol)
+                db = DBSCAN(eps=float(eps_value), min_samples=2).fit(levels_array)
+                labels = db.labels_
+            except Exception as e:
+                print(f"DBSCAN failed: {e}, using simple clustering")
+                labels = np.zeros(len(levels))
+            
+            clusters = {}
+            for i, label in enumerate(labels):
+                if label not in clusters:
+                    clusters[label] = []
+                clusters[label].append(levels[i])
+            
+            scored_clusters = []
+            for label, cluster in clusters.items():
+                if label != -1:
+                    avg_price = np.mean(cluster)
+                    
+                    if is_support:
+                        touches = len(price_data[
+                            (price_data['low'] <= avg_price * 1.003) & 
+                            (price_data['low'] >= avg_price * 0.997)
+                        ])
+                    else:
+                        touches = len(price_data[
+                            (price_data['high'] >= avg_price * 0.997) & 
+                            (price_data['high'] <= avg_price * 1.003)
+                        ])
+                    
+                    volume_mask = (price_data['close'] >= avg_price * 0.995) & (price_data['close'] <= avg_price * 1.005)
+                    volume_score = price_data.loc[volume_mask, 'volume'].mean() / price_data['volume'].mean() if not price_data['volume'].mean() == 0 else 1
+                    
+                    strength = min((touches * 0.4) + (volume_score * 0.6), 1.0)
+                    scored_clusters.append((avg_price, strength, len(cluster)))
+            
+            scored_clusters.sort(key=lambda x: x[1], reverse=True)
+            return [(price, strength) for price, strength, _ in scored_clusters]
         
-        if model is None or scaler is None:
-            model, scaler = self.train_model(symbol, df)
-            if model is None:
-                return None
-                
-        X, _, _ = self.prepare_data(df)
-        if len(X) == 0:
-            return None
-            
-        X = X[-1].reshape(1, X.shape[1], 1)
-        prediction = model.predict(X, verbose=0)[0][0]
-        return scaler.inverse_transform([[prediction]])[0][0]
-
-    def calculate_trade_accuracy(self, df, current_price, predicted_price, support, resistance):
-        accuracy = 50  # الأساس 50%
+        support_levels = df.iloc[low_idx]['low'].values if len(low_idx) > 0 else []
+        resistance_levels = df.iloc[high_idx]['high'].values if len(high_idx) > 0 else []
         
-        if df.empty:
-            return accuracy
-            
-        # عوامل الدقة
-        rsi = df['RSI'].iloc[-1]
-        macd_hist = df['MACD_hist'].iloc[-1]
-        price_position = (current_price - df['BB_lower'].iloc[-1]) / (df['BB_upper'].iloc[-1] - df['BB_lower'].iloc[-1])
-        adx = df['ADX'].iloc[-1]
-        w_rsi = df['WRSI'].iloc[-1]
-        vwap_position = (current_price - df['VWAP'].iloc[-1]) / df['VWAP'].iloc[-1] * 100
+        support = cluster_and_score(support_levels, df, is_support=True)
+        resistance = cluster_and_score(resistance_levels, df, is_support=False)
         
-        if predicted_price > current_price:  # إشارة شراء
-            if rsi < 60:
-                accuracy += 8 * (1 - rsi/60)
-            if macd_hist > 0:
-                accuracy += 5 * (macd_hist / df['close'].iloc[-1] * 100)
-            if price_position < 0.5:
-                accuracy += 5 * (1 - price_position)
-            if adx > 25:
-                accuracy += 5 * (adx / 50)
-            if w_rsi < 60:
-                accuracy += 5 * (1 - w_rsi/60)
-            if vwap_position > -1:
-                accuracy += 5
-                
-            if support:
-                for s, strength in support:
-                    distance_pct = abs(current_price - s) / current_price * 100
-                    if distance_pct < 1:
-                        accuracy += 10 * strength * (1 - distance_pct/1)
-                        break
-        else:  # إشارة بيع
-            if rsi > 40:
-                accuracy += 8 * (rsi/70)
-            if macd_hist < 0:
-                accuracy += 5 * abs(macd_hist / df['close'].iloc[-1] * 100)
-            if price_position > 0.5:
-                accuracy += 5 * price_position
-            if adx > 25:
-                accuracy += 5 * (adx / 50)
-            if w_rsi > 40:
-                accuracy += 5 * (w_rsi/70)
-            if vwap_position < 1:
-                accuracy += 5
-                
-            if resistance:
-                for r, strength in resistance:
-                    distance_pct = abs(current_price - r) / current_price * 100
-                    if distance_pct < 1:
-                        accuracy += 10 * strength * (1 - distance_pct/1)
-                        break
+        return support[:6], resistance[:6]
+    
+    def find_strong_support_resistance_5m(self, df, window=10):
+        if len(df) < window * 2:
+            return [], []
         
-        if df['high_volume'].iloc[-1]:
-            accuracy += 5 * (df['volume'].iloc[-1] / df['volume_ma'].iloc[-1])
-            
-        trend_strength = 0
-        if len(df) > 50:
-            slope, _, _, _, _ = linregress(range(50), df['close'].iloc[-50:])
-            if (slope > 0 and predicted_price > current_price) or (slope < 0 and predicted_price < current_price):
-                trend_strength = min(abs(slope / df['close'].iloc[-1] * 1000), 10)
-                accuracy += trend_strength
-            
-        return min(95, max(55, accuracy))
-
-    def generate_trade_signal(self, df, predicted_price, support, resistance, liquidity_zones):
-        if predicted_price is None or df.empty:
-            return None
-            
-        current_price = df['close'].iloc[-1]
-        atr = df['ATR'].iloc[-1]
-        rsi = df['RSI'].iloc[-1]
-        vwap = df['VWAP'].iloc[-1]
-        adx = df['ADX'].iloc[-1]
+        high_idx = argrelextrema(df['high'].values, np.greater, order=window)[0]
+        low_idx = argrelextrema(df['low'].values, np.less, order=window)[0]
         
-        # تقييم التقلب
-        volatility = self.assess_volatility(df)
+        def cluster_and_score(levels, price_data, is_support=True):
+            if len(levels) == 0:
+                return []
+            
+            eps_value = np.std(levels) * 0.2
+            
+            if eps_value <= 0:
+                eps_value = np.mean(levels) * 0.002
+            
+            eps_value = max(eps_value, np.mean(levels) * 0.0005)
+            
+            levels_array = np.array(levels).reshape(-1, 1)
+            
+            try:
+                db = DBSCAN(eps=float(eps_value), min_samples=2).fit(levels_array)
+                labels = db.labels_
+            except Exception as e:
+                print(f"DBSCAN failed: {e}, using simple clustering")
+                labels = np.zeros(len(levels))
+            
+            clusters = {}
+            for i, label in enumerate(labels):
+                if label not in clusters:
+                    clusters[label] = []
+                clusters[label].append(levels[i])
+            
+            scored_clusters = []
+            for label, cluster in clusters.items():
+                if label != -1:
+                    avg_price = np.mean(cluster)
+                    
+                    if is_support:
+                        touches = len(price_data[
+                            (price_data['low'] <= avg_price * 1.002) & 
+                            (price_data['low'] >= avg_price * 0.998)
+                        ])
+                    else:
+                        touches = len(price_data[
+                            (price_data['high'] >= avg_price * 0.998) & 
+                            (price_data['high'] <= avg_price * 1.002)
+                        ])
+                    
+                    volume_mask = (price_data['close'] >= avg_price * 0.997) & (price_data['close'] <= avg_price * 1.003)
+                    volume_score = price_data.loc[volume_mask, 'volume'].mean() / price_data['volume'].mean() if not price_data['volume'].mean() == 0 else 1
+                    
+                    strength = min((touches * 0.3) + (volume_score * 0.7), 1.0)
+                    scored_clusters.append((avg_price, strength, len(cluster)))
+            
+            scored_clusters.sort(key=lambda x: x[1], reverse=True)
+            return [(price, strength) for price, strength, _ in scored_clusters]
         
-        accuracy = self.calculate_trade_accuracy(df, current_price, predicted_price, support, resistance)
+        support_levels = df.iloc[low_idx]['low'].values if len(low_idx) > 0 else []
+        resistance_levels = df.iloc[high_idx]['high'].values if len(high_idx) > 0 else []
         
-        # تقليل الدقة إذا كان التقلب عاليًا
-        if volatility['level'] in ['high', 'extreme']:
-            accuracy = max(55, accuracy * 0.7)  # تقليل الدقة بنسبة 30%
+        support = cluster_and_score(support_levels, df, is_support=True)
+        resistance = cluster_and_score(resistance_levels, df, is_support=False)
         
-        # تعريف المتغيرات مسبقًا لتجنب الأخطاء
-        closest_support = None
-        closest_resistance = None
+        return support[:8], resistance[:8]
+    
+    def find_strong_support_resistance_1m(self, df, window=7):
+        if len(df) < window * 2:
+            return [], []
         
-        # تحسين نقاط الدخول والخروج
-        if predicted_price > current_price * 1.015 and rsi < 65:
-            # تحسين إشارة الشراء
-            entry = current_price * 1.005  # نقطة الدخول الأساسية
-            
-            # ضبط الدخول بناءً على أقرب دعم
-            if support:
-                support_below = [s for s, _ in support if s < current_price]
-                if support_below:
-                    closest_support = max(support_below)
-                    entry = max(entry, closest_support * 1.005)  # الدخول أعلى بقليل من الدعم
-            
-            # حساب وقف الخسارة الآمن بنسبة 3-4% حسب التقلبات
-            max_loss_pct = 3.0 + (1.0 if volatility['level'] in ['high', 'extreme'] else 0)  # 3% للأسواق العادية، 4% للأسواق المتقلبة
-            
-            # حساب وقف الخسارة الأساسي
-            stop_loss = current_price * (1 - max_loss_pct/100)
-            
-            # ضبط وقف الخسارة بناءً على الدعم والمتوسط المتحرك
-            if support:
-                support_below = [s for s, _ in support if s < current_price]
-                if support_below:
-                    stop_loss = max(max(support_below) * 0.99, stop_loss)  # زيادة هامش الأمان إلى 1% تحت الدعم
-            
-            # استخدام ATR لوقف الخسارة إذا كان أفضل
-            atr_stop = current_price - (atr * 2.5)  # زيادة مضاعف ATR إلى 2.5
-            stop_loss = max(stop_loss, atr_stop)
-            
-            # حساب جني الأرباح بنسبة 5-6% حسب التقلبات
-            min_take_profit = entry * (1 + (5.0 + (1.0 if volatility['level'] in ['high', 'extreme'] else 0))/100)  # 5% للأسواق العادية، 6% للأسواق المتقلبة
-            
-            # ضبط جني الأرباح بناءً على المقاومة
-            take_profit = min_take_profit
-            if resistance:
-                resistance_above = [r for r, _ in resistance if r > current_price]
-                if resistance_above:
-                    closest_resistance = min(resistance_above)
-                    take_profit = min(closest_resistance * 0.99, take_profit)  # زيادة هامش الأمان إلى 1% تحت المقاومة
-            
-            # الضبط بناءً على مناطق السيولة
-            if liquidity_zones:
-                for zone in liquidity_zones:
-                    if zone[0] < take_profit < zone[1]:
-                        take_profit = zone[0] * 0.99  # زيادة هامش الأمان
-            
-            # التأكد من أن جني الأرباح أعلى من نقطة الدخول
-            if take_profit <= entry:
-                take_profit = entry * 1.06  # زيادة بنسبة 6% كحد أدنى
-            
-            # حساب نسبة المخاطرة/العائد
-            risk_reward = round((take_profit - entry) / (entry - stop_loss), 2)
-            
-            # حساب ثقة الصفقة
-            confidence = accuracy
-            if closest_support:
-                distance_pct = abs(current_price - closest_support) / current_price * 100
-                confidence = min(95, confidence + 10 * (1 - distance_pct/2))
-            if current_price > vwap:
-                confidence = min(95, confidence + 5)
-            if adx > 25:
-                confidence = min(95, confidence + 5 * (adx / 50))
-            
-            signal = {
-                'action': 'BUY',
-                'entry': round(entry, 4),
-                'stop_loss': round(stop_loss, 4),
-                'take_profit': round(take_profit, 4),
-                'confidence': round(confidence, 1),
-                'risk_reward': risk_reward,
-                'accuracy': round(accuracy, 1),
-                'trend_strength': round(adx, 1),
-                'strategy': 'اختراق مع دعم' if closest_support and abs(current_price - closest_support) < current_price * 0.01 else 'متابعة الاتجاه',
-                'current_price': round(current_price, 4),
-                'predicted_price': round(predicted_price, 4),
-                'volatility': volatility,
-                'timestamp': df['timestamp'].iloc[-1]
-            }
-            
-            if volatility['level'] == 'extreme':
-                signal['risk_note'] = "تحذير شديد: السوق شديد التقلب - تجنب المراكز الكبيرة"
-            elif volatility['level'] == 'high':
-                signal['risk_note'] = "تحذير: السوق متقلب - قلل من حجم المركز"
-            else:
-                signal['risk_note'] = "التقلب ضمن النطاق الطبيعي"
-            
-            return signal
-            
-        elif predicted_price < current_price * 0.985 and rsi > 35:
-            # تحسين إشارة البيع
-            entry = current_price * 0.995  # نقطة الدخول الأساسية
-            
-            # ضبط الدخول بناءً على أقرب مقاومة
-            if resistance:
-                resistance_above = [r for r, _ in resistance if r > current_price]
-                if resistance_above:
-                    closest_resistance = min(resistance_above)
-                    entry = min(entry, closest_resistance * 0.995)  # الدخول أقل بقليل من المقاومة
-            
-            # حساب وقف الخسارة الآمن بنسبة 3-4% حسب التقلبات
-            max_loss_pct = 3.0 + (1.0 if volatility['level'] in ['high', 'extreme'] else 0)  # 3% للأسواق العادية، 4% للأسواق المتقلبة
-            
-            # حساب وقف الخسارة الأساسي
-            stop_loss = current_price * (1 + max_loss_pct/100)
-            
-            # ضبط وقف الخسارة بناءً على المقاومة والمتوسط المتحرك
-            if resistance:
-                resistance_above = [r for r, _ in resistance if r > current_price]
-                if resistance_above:
-                    stop_loss = min(min(resistance_above) * 1.01, stop_loss)  # زيادة هامش الأمان إلى 1% فوق المقاومة
-            
-            # استخدام ATR لوقف الخسارة إذا كان أفضل
-            atr_stop = current_price + (atr * 2.5)  # زيادة مضاعف ATR إلى 2.5
-            stop_loss = min(stop_loss, atr_stop)
-            
-            # حساب جني الأرباح بنسبة 5-6% حسب التقلبات
-            min_take_profit = entry * (1 - (5.0 + (1.0 if volatility['level'] in ['high', 'extreme'] else 0))/100)  # 5% للأسواق العادية، 6% للأسواق المتقلبة
-            
-            # ضبط جني الأرباح بناءً على الدعم
-            take_profit = min_take_profit
-            if support:
-                support_below = [s for s, _ in support if s < current_price]
-                if support_below:
-                    closest_support = max(support_below)
-                    take_profit = max(closest_support * 1.01, take_profit)  # زيادة هامش الأمان إلى 1% فوق الدعم
-            
-            # الضبط بناءً على مناطق السيولة
-            if liquidity_zones:
-                for zone in liquidity_zones:
-                    if zone[0] < take_profit < zone[1]:
-                        take_profit = zone[1] * 1.01  # زيادة هامش الأمان
-            
-            # التأكد من أن جني الأرباح أقل من نقطة الدخول
-            if take_profit >= entry:
-                take_profit = entry * 0.94  # انخفاض بنسبة 6% كحد أدنى
-            
-            # حساب نسبة المخاطرة/العائد
-            risk_reward = round((entry - take_profit) / (stop_loss - entry), 2)
-            
-            # حساب ثقة الصفقة
-            confidence = accuracy
-            if closest_resistance:
-                distance_pct = abs(current_price - closest_resistance) / current_price * 100
-                confidence = min(95, confidence + 10 * (1 - distance_pct/2))
-            if current_price < vwap:
-                confidence = min(95, confidence + 5)
-            if adx > 25:
-                confidence = min(95, confidence + 5 * (adx / 50))
-            
-            signal = {
-                'action': 'SELL',
-                'entry': round(entry, 4),
-                'stop_loss': round(stop_loss, 4),
-                'take_profit': round(take_profit, 4),
-                'confidence': round(confidence, 1),
-                'risk_reward': risk_reward,
-                'accuracy': round(accuracy, 1),
-                'trend_strength': round(adx, 1),
-                'strategy': 'اختراق مع مقاومة' if closest_resistance and abs(current_price - closest_resistance) < current_price * 0.01 else 'متابعة الاتجاه',
-                'current_price': round(current_price, 4),
-                'predicted_price': round(predicted_price, 4),
-                'volatility': volatility,
-                'timestamp': df['timestamp'].iloc[-1]
-            }
-            
-            if volatility['level'] == 'extreme':
-                signal['risk_note'] = "تحذير شديد: السوق شديد التقلب - تجنب المراكز الكبيرة"
-            elif volatility['level'] == 'high':
-                signal['risk_note'] = "تحذير: السوق متقلب - قلل من حجم المركز"
-            else:
-                signal['risk_note'] = "التقلب ضمن النطاق الطبيعي"
-            
-            return signal
+        high_idx = argrelextrema(df['high'].values, np.greater, order=window)[0]
+        low_idx = argrelextrema(df['low'].values, np.less, order=window)[0]
         
-        return None
-
-    def create_main_chart(self, df, support, resistance, liquidity_zones, predicted_price, symbol):
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                          vertical_spacing=0.05, 
-                          row_heights=[0.7, 0.3])
+        def cluster_and_score(levels, price_data, is_support=True):
+            if len(levels) == 0:
+                return []
+            
+            eps_value = np.std(levels) * 0.15
+            
+            if eps_value <= 0:
+                eps_value = np.mean(levels) * 0.0015
+            
+            eps_value = max(eps_value, np.mean(levels) * 0.0003)
+            
+            levels_array = np.array(levels).reshape(-1, 1)
+            
+            try:
+                db = DBSCAN(eps=float(eps_value), min_samples=2).fit(levels_array)
+                labels = db.labels_
+            except Exception as e:
+                print(f"DBSCAN failed: {e}, using simple clustering")
+                labels = np.zeros(len(levels))
+            
+            clusters = {}
+            for i, label in enumerate(labels):
+                if label not in clusters:
+                    clusters[label] = []
+                clusters[label].append(levels[i])
+            
+            scored_clusters = []
+            for label, cluster in clusters.items():
+                if label != -1:
+                    avg_price = np.mean(cluster)
+                    
+                    if is_support:
+                        touches = len(price_data[
+                            (price_data['low'] <= avg_price * 1.0015) & 
+                            (price_data['low'] >= avg_price * 0.9985)
+                        ])
+                    else:
+                        touches = len(price_data[
+                            (price_data['high'] >= avg_price * 0.9985) & 
+                            (price_data['high'] <= avg_price * 1.0015)
+                        ])
+                    
+                    volume_mask = (price_data['close'] >= avg_price * 0.998) & (price_data['close'] <= avg_price * 1.002)
+                    volume_score = price_data.loc[volume_mask, 'volume'].mean() / price_data['volume'].mean() if not price_data['volume'].mean() == 0 else 1
+                    
+                    strength = min((touches * 0.25) + (volume_score * 0.75), 1.0)
+                    scored_clusters.append((avg_price, strength, len(cluster)))
+            
+            scored_clusters.sort(key=lambda x: x[1], reverse=True)
+            return [(price, strength) for price, strength, _ in scored_clusters]
         
-        # الشموع اليابانية
+        support_levels = df.iloc[low_idx]['low'].values if len(low_idx) > 0 else []
+        resistance_levels = df.iloc[high_idx]['high'].values if len(high_idx) > 0 else []
+        
+        support = cluster_and_score(support_levels, df, is_support=True)
+        resistance = cluster_and_score(resistance_levels, df, is_support=False)
+        
+        return support[:10], resistance[:10]
+    
+    def create_main_chart(self, df_1h, symbol):
+        if df_1h is None or df_1h.empty:
+            return go.Figure()
+        
+        fig = make_subplots(
+            rows=3, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.05,
+            row_heights=[0.6, 0.2, 0.2],
+            subplot_titles=("الرسم البياني للسعر - 1 ساعة", "الحجم", "RSI")
+        )
+        
         fig.add_trace(go.Candlestick(
-            x=df['timestamp'],
-            open=df['open'],
-            high=df['high'],
-            low=df['low'],
-            close=df['close'],
+            x=df_1h['timestamp'],
+            open=df_1h['open'],
+            high=df_1h['high'],
+            low=df_1h['low'],
+            close=df_1h['close'],
             name='السعر',
             increasing_line_color='#00ff88',
             decreasing_line_color='#ff0066'
         ), row=1, col=1)
         
-        # المتوسطات المتحركة
-        fig.add_trace(go.Scatter(
-            x=df['timestamp'],
-            y=df['SMA_20'],
-            name='SMA 20',
-            line=dict(color='#ffaa00', width=1.5)
-        ), row=1, col=1)
+        if symbol in self.blue_liquidity_lines:
+            for line in self.blue_liquidity_lines[symbol]:
+                fig.add_shape(
+                    type='line',
+                    x0=df_1h['timestamp'].iloc[0],
+                    x1=df_1h['timestamp'].iloc[-1],
+                    y0=line['price'],
+                    y1=line['price'],
+                    line=dict(
+                        color=line['color'],
+                        width=line['width'],
+                        dash=line['dash']
+                    ),
+                    name=line['description'],
+                    row=1, col=1
+                )
+                
+                fig.add_annotation(
+                    x=df_1h['timestamp'].iloc[-1],
+                    y=line['price'],
+                    text=line['description'],
+                    showarrow=True,
+                    arrowhead=1,
+                    ax=40,
+                    ay=0,
+                    bgcolor='rgba(30, 144, 255, 0.8)',
+                    bordercolor='#1E90FF',
+                    borderwidth=2,
+                    font=dict(color='white', size=10),
+                    row=1, col=1
+                )
         
-        fig.add_trace(go.Scatter(
-            x=df['timestamp'],
-            y=df['SMA_50'],
-            name='SMA 50',
-            line=dict(color='#0090ff', width=1.5)
-        ), row=1, col=1)
+        if symbol in self.white_liquidity_levels:
+            for level in self.white_liquidity_levels[symbol]:
+                fig.add_shape(
+                    type='line',
+                    x0=df_1h['timestamp'].iloc[0],
+                    x1=df_1h['timestamp'].iloc[-1],
+                    y0=level['price'],
+                    y1=level['price'],
+                    line=dict(
+                        color=level['color'],
+                        width=level['width'],
+                        dash=level['dash']
+                    ),
+                    name=level['description'],
+                    row=1, col=1
+                )
+                
+                fig.add_annotation(
+                    x=df_1h['timestamp'].iloc[-1],
+                    y=level['price'],
+                    text=level['description'],
+                    showarrow=True,
+                    arrowhead=1,
+                    ax=40,
+                    ay=0,
+                    bgcolor='rgba(255, 255, 255, 0.8)',
+                    bordercolor='white',
+                    borderwidth=2,
+                    font=dict(color='black', size=10),
+                    row=1, col=1
+                )
         
-        fig.add_trace(go.Scatter(
-            x=df['timestamp'],
-            y=df['EMA_100'],
-            name='EMA 100',
-            line=dict(color='#aa00ff', width=1.5)
-        ), row=1, col=1)
+        if symbol in self.yellow_liquidation_zones:
+            for zone in self.yellow_liquidation_zones[symbol]:
+                fig.add_shape(
+                    type='line',
+                    x0=df_1h['timestamp'].iloc[0],
+                    x1=df_1h['timestamp'].iloc[-1],
+                    y0=zone['price'],
+                    y1=zone['price'],
+                    line=dict(
+                        color=zone['color'],
+                        width=zone['width'],
+                        dash=zone['dash']
+                    ),
+                    name=zone['description'],
+                    row=1, col=1
+                )
+                
+                fig.add_annotation(
+                    x=df_1h['timestamp'].iloc[-1],
+                    y=zone['price'],
+                    text=zone['description'],
+                    showarrow=True,
+                    arrowhead=1,
+                    ax=40,
+                    ay=0,
+                    bgcolor='rgba(255, 255, 0, 0.8)',
+                    bordercolor='#FFFF00',
+                    borderwidth=2,
+                    font=dict(color='black', size=10),
+                    row=1, col=1
+                )
         
-        # VWAP
-        fig.add_trace(go.Scatter(
-            x=df['timestamp'],
-            y=df['VWAP'],
-            name='VWAP',
-            line=dict(color='#00f0ff', width=1.5, dash='dot')
-        ), row=1, col=1)
+        if symbol in self.orange_magnetic_zones:
+            for zone in self.orange_magnetic_zones[symbol]:
+                fig.add_shape(
+                    type='line',
+                    x0=df_1h['timestamp'].iloc[0],
+                    x1=df_1h['timestamp'].iloc[-1],
+                    y0=zone['price'],
+                    y1=zone['price'],
+                    line=dict(
+                        color=zone['color'],
+                        width=zone['width'],
+                        dash=zone['dash']
+                    ),
+                    name=zone['description'],
+                    row=1, col=1
+                )
+                
+                fig.add_annotation(
+                    x=df_1h['timestamp'].iloc[-1],
+                    y=zone['price'],
+                    text=zone['description'],
+                    showarrow=True,
+                    arrowhead=1,
+                    ax=40,
+                    ay=0,
+                    bgcolor='rgba(255, 165, 0, 0.8)',
+                    bordercolor='#FFA500',
+                    borderwidth=2,
+                    font=dict(color='white', size=10),
+                    row=1, col=1
+                )
         
-        # الدعم والمقاومة
-        for level, strength in support:
-            fig.add_shape(type='line',
-                        x0=df['timestamp'].iloc[0], y0=level,
-                        x1=df['timestamp'].iloc[-1], y1=level,
-                        line=dict(color='#00ff88', width=2, dash='dash'),
-                        name=f'دعم {level:.2f}',
-                        row=1, col=1)
-        
-        for level, strength in resistance:
-            fig.add_shape(type='line',
-                        x0=df['timestamp'].iloc[0], y0=level,
-                        x1=df['timestamp'].iloc[-1], y1=level,
-                        line=dict(color='#ff0066', width=2, dash='dash'),
-                        name=f'مقاومة {level:.2f}',
-                        row=1, col=1)
-        
-        # مناطق السيولة
-        for zone in liquidity_zones:
-            fig.add_shape(type='rect',
-                        x0=df['timestamp'].iloc[0], y0=zone[0],
-                        x1=df['timestamp'].iloc[-1], y1=zone[1],
-                        fillcolor='#0090ff', opacity=0.15, line_width=0,
-                        name=f'منطقة سيولة {zone[0]:.2f}-{zone[1]:.2f}',
-                        row=1, col=1)
-        
-        # التنبؤ
-        if predicted_price:
-            fig.add_trace(go.Scatter(
-                x=[df['timestamp'].iloc[-1], df['timestamp'].iloc[-1] + timedelta(hours=4)],
-                y=[df['close'].iloc[-1], predicted_price],
-                name='التنبؤ',
-                line=dict(color='#00f0ff', width=3, dash='dot'),
-                marker=dict(size=12, color='#00f0ff')
-            ), row=1, col=1)
-        
-        # الحجم
         fig.add_trace(go.Bar(
-            x=df['timestamp'],
-            y=df['volume'],
+            x=df_1h['timestamp'],
+            y=df_1h['volume'],
             name='الحجم',
             marker_color='#7f8c8d',
             opacity=0.7
         ), row=2, col=1)
         
-        # المتوسط المتحرك للحجم
-        fig.add_trace(go.Scatter(
-            x=df['timestamp'],
-            y=df['volume_ma'],
-            name='متوسط الحجم',
-            line=dict(color='#ff0066', width=1.5)
-        ), row=2, col=1)
+        if 'RSI' in df_1h.columns:
+            fig.add_trace(go.Scatter(
+                x=df_1h['timestamp'],
+                y=df_1h['RSI'],
+                name='RSI',
+                line=dict(color='#ff00ff', width=1.5)
+            ), row=3, col=1)
+            
+            fig.add_shape(
+                type='rect',
+                x0=df_1h['timestamp'].iloc[0],
+                x1=df_1h['timestamp'].iloc[-1],
+                y0=70,
+                y1=100,
+                fillcolor='rgba(255, 0, 0, 0.2)',
+                line=dict(width=0),
+                row=3, col=1
+            )
+            
+            fig.add_shape(
+                type='rect',
+                x0=df_1h['timestamp'].iloc[0],
+                x1=df_1h['timestamp'].iloc[-1],
+                y0=0,
+                y1=30,
+                fillcolor='rgba(0, 255, 0, 0.2)',
+                line=dict(width=0),
+                row=3, col=1
+            )
         
-        # التنسيق
         fig.update_layout(
-            title=f"تحليل متقدم لـ {symbol}",
-            height=800,
+            title=f"📊 {symbol} - 1 ساعة",
+            height=1000,
             showlegend=True,
             hovermode="x unified",
             plot_bgcolor='rgba(10, 10, 30, 0.5)',
             paper_bgcolor='rgba(10, 10, 30, 0.5)',
-            margin=dict(l=20, r=20, t=60, b=20),
+            margin=dict(l=20, r=20, t=80, b=20),
             font=dict(color='#e0f0ff'),
             legend=dict(
                 orientation="h",
                 yanchor="bottom",
                 y=1.02,
                 xanchor="right",
-                x=1,
-                font=dict(color='#e0f0ff')
+                x=1
             )
         )
         
-        fig.update_xaxes(
-            rangeslider_visible=False,
-            row=1, col=1,
-            gridcolor='rgba(0, 240, 255, 0.1)',
-            zerolinecolor='rgba(0, 240, 255, 0.1)'
+        fig.update_xaxes(rangeslider_visible=False, row=1, col=1)
+        
+        return fig
+    
+    def create_15m_chart(self, df_15m, symbol):
+        if df_15m is None or df_15m.empty:
+            return go.Figure()
+        
+        fig = make_subplots(
+            rows=3, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.05,
+            row_heights=[0.6, 0.2, 0.2],
+            subplot_titles=("الرسم البياني للسعر - 15 دقيقة", "الحجم", "RSI")
         )
         
-        fig.update_yaxes(
-            title_text="السعر (USDT)", 
-            row=1, 
-            col=1,
-            gridcolor='rgba(0, 240, 255, 0.1)',
-            zerolinecolor='rgba(0, 240, 255, 0.1)'
+        fig.add_trace(go.Candlestick(
+            x=df_15m['timestamp'],
+            open=df_15m['open'],
+            high=df_15m['high'],
+            low=df_15m['low'],
+            close=df_15m['close'],
+            name='السعر',
+            increasing_line_color='#00ff88',
+            decreasing_line_color='#ff0066'
+        ), row=1, col=1)
+        
+        if symbol in self.blue_liquidity_lines_15m:
+            for line in self.blue_liquidity_lines_15m[symbol]:
+                fig.add_shape(
+                    type='line',
+                    x0=df_15m['timestamp'].iloc[0],
+                    x1=df_15m['timestamp'].iloc[-1],
+                    y0=line['price'],
+                    y1=line['price'],
+                    line=dict(
+                        color=line['color'],
+                        width=line['width'],
+                        dash=line['dash']
+                    ),
+                    name=line['description'],
+                    row=1, col=1
+                )
+                
+                fig.add_annotation(
+                    x=df_15m['timestamp'].iloc[-1],
+                    y=line['price'],
+                    text=line['description'],
+                    showarrow=True,
+                    arrowhead=1,
+                    ax=40,
+                    ay=0,
+                    bgcolor='rgba(30, 144, 255, 0.8)',
+                    bordercolor='#1E90FF',
+                    borderwidth=2,
+                    font=dict(color='white', size=10),
+                    row=1, col=1
+                )
+        
+        if symbol in self.white_liquidity_levels_15m:
+            for level in self.white_liquidity_levels_15m[symbol]:
+                fig.add_shape(
+                    type='line',
+                    x0=df_15m['timestamp'].iloc[0],
+                    x1=df_15m['timestamp'].iloc[-1],
+                    y0=level['price'],
+                    y1=level['price'],
+                    line=dict(
+                        color=level['color'],
+                        width=level['width'],
+                        dash=level['dash']
+                    ),
+                    name=level['description'],
+                    row=1, col=1
+                )
+                
+                fig.add_annotation(
+                    x=df_15m['timestamp'].iloc[-1],
+                    y=level['price'],
+                    text=level['description'],
+                    showarrow=True,
+                    arrowhead=1,
+                    ax=40,
+                    ay=0,
+                    bgcolor='rgba(255, 255, 255, 0.8)',
+                    bordercolor='white',
+                    borderwidth=2,
+                    font=dict(color='black', size=10),
+                    row=1, col=1
+                )
+        
+        if symbol in self.yellow_liquidation_zones_15m:
+            for zone in self.yellow_liquidation_zones_15m[symbol]:
+                fig.add_shape(
+                    type='line',
+                    x0=df_15m['timestamp'].iloc[0],
+                    x1=df_15m['timestamp'].iloc[-1],
+                    y0=zone['price'],
+                    y1=zone['price'],
+                    line=dict(
+                        color=zone['color'],
+                        width=zone['width'],
+                        dash=zone['dash']
+                    ),
+                    name=zone['description'],
+                    row=1, col=1
+                )
+                
+                fig.add_annotation(
+                    x=df_15m['timestamp'].iloc[-1],
+                    y=zone['price'],
+                    text=zone['description'],
+                    showarrow=True,
+                    arrowhead=1,
+                    ax=40,
+                    ay=0,
+                    bgcolor='rgba(255, 255, 0, 0.8)',
+                    bordercolor='#FFFF00',
+                    borderwidth=2,
+                    font=dict(color='black', size=10),
+                    row=1, col=1
+                )
+        
+        if symbol in self.orange_magnetic_zones_15m:
+            for zone in self.orange_magnetic_zones_15m[symbol]:
+                fig.add_shape(
+                    type='line',
+                    x0=df_15m['timestamp'].iloc[0],
+                    x1=df_15m['timestamp'].iloc[-1],
+                    y0=zone['price'],
+                    y1=zone['price'],
+                    line=dict(
+                        color=zone['color'],
+                        width=zone['width'],
+                        dash=zone['dash']
+                    ),
+                    name=zone['description'],
+                    row=1, col=1
+                )
+                
+                fig.add_annotation(
+                    x=df_15m['timestamp'].iloc[-1],
+                    y=zone['price'],
+                    text=zone['description'],
+                    showarrow=True,
+                    arrowhead=1,
+                    ax=40,
+                    ay=0,
+                    bgcolor='rgba(255, 165, 0, 0.8)',
+                    bordercolor='#FFA500',
+                    borderwidth=2,
+                    font=dict(color='white', size=10),
+                    row=1, col=1
+                )
+        
+        fig.add_trace(go.Bar(
+            x=df_15m['timestamp'],
+            y=df_15m['volume'],
+            name='الحجم',
+            marker_color='#7f8c8d',
+            opacity=0.7
+        ), row=2, col=1)
+        
+        if 'RSI' in df_15m.columns:
+            fig.add_trace(go.Scatter(
+                x=df_15m['timestamp'],
+                y=df_15m['RSI'],
+                name='RSI',
+                line=dict(color='#ff00ff', width=1.5)
+            ), row=3, col=1)
+            
+            fig.add_shape(
+                type='rect',
+                x0=df_15m['timestamp'].iloc[0],
+                x1=df_15m['timestamp'].iloc[-1],
+                y0=70,
+                y1=100,
+                fillcolor='rgba(255, 0, 0, 0.2)',
+                line=dict(width=0),
+                row=3, col=1
+            )
+            
+            fig.add_shape(
+                type='rect',
+                x0=df_15m['timestamp'].iloc[0],
+                x1=df_15m['timestamp'].iloc[-1],
+                y0=0,
+                y1=30,
+                fillcolor='rgba(0, 255, 0, 0.2)',
+                line=dict(width=0),
+                row=3, col=1
+            )
+        
+        fig.update_layout(
+            title=f"📊 {symbol} - 15 دقيقة",
+            height=1000,
+            showlegend=True,
+            hovermode="x unified",
+            plot_bgcolor='rgba(10, 10, 30, 0.5)',
+            paper_bgcolor='rgba(10, 10, 30, 0.5)',
+            margin=dict(l=20, r=20, t=80, b=20),
+            font=dict(color='#e0f0ff'),
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            )
         )
         
-        fig.update_yaxes(
-            title_text="الحجم", 
-            row=2, 
-            col=1,
-            gridcolor='rgba(0, 240, 255, 0.1)',
-            zerolinecolor='rgba(0, 240, 255, 0.1)'
+        fig.update_xaxes(rangeslider_visible=False, row=1, col=1)
+        
+        return fig
+    
+    def create_5m_chart(self, df_5m, symbol):
+        if df_5m is None or df_5m.empty:
+            return go.Figure()
+        
+        fig = make_subplots(
+            rows=3, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.05,
+            row_heights=[0.6, 0.2, 0.2],
+            subplot_titles=("الرسم البياني للسعر - 5 دقائق", "الحجم", "RSI")
         )
+        
+        fig.add_trace(go.Candlestick(
+            x=df_5m['timestamp'],
+            open=df_5m['open'],
+            high=df_5m['high'],
+            low=df_5m['low'],
+            close=df_5m['close'],
+            name='السعر',
+            increasing_line_color='#00ff88',
+            decreasing_line_color='#ff0066'
+        ), row=1, col=1)
+        
+        if symbol in self.blue_liquidity_lines_5m:
+            for line in self.blue_liquidity_lines_5m[symbol]:
+                fig.add_shape(
+                    type='line',
+                    x0=df_5m['timestamp'].iloc[0],
+                    x1=df_5m['timestamp'].iloc[-1],
+                    y0=line['price'],
+                    y1=line['price'],
+                    line=dict(
+                        color=line['color'],
+                        width=line['width'],
+                        dash=line['dash']
+                    ),
+                    name=line['description'],
+                    row=1, col=1
+                )
+                
+                fig.add_annotation(
+                    x=df_5m['timestamp'].iloc[-1],
+                    y=line['price'],
+                    text=line['description'],
+                    showarrow=True,
+                    arrowhead=1,
+                    ax=40,
+                    ay=0,
+                    bgcolor='rgba(30, 144, 255, 0.8)',
+                    bordercolor='#1E90FF',
+                    borderwidth=2,
+                    font=dict(color='white', size=10),
+                    row=1, col=1
+                )
+        
+        if symbol in self.white_liquidity_levels_5m:
+            for level in self.white_liquidity_levels_5m[symbol]:
+                fig.add_shape(
+                    type='line',
+                    x0=df_5m['timestamp'].iloc[0],
+                    x1=df_5m['timestamp'].iloc[-1],
+                    y0=level['price'],
+                    y1=level['price'],
+                    line=dict(
+                        color=level['color'],
+                        width=level['width'],
+                        dash=level['dash']
+                    ),
+                    name=level['description'],
+                    row=1, col=1
+                )
+                
+                fig.add_annotation(
+                    x=df_5m['timestamp'].iloc[-1],
+                    y=level['price'],
+                    text=level['description'],
+                    showarrow=True,
+                    arrowhead=1,
+                    ax=40,
+                    ay=0,
+                    bgcolor='rgba(255, 255, 255, 0.8)',
+                    bordercolor='white',
+                    borderwidth=2,
+                    font=dict(color='black', size=10),
+                    row=1, col=1
+                )
+        
+        if symbol in self.yellow_liquidation_zones_5m:
+            for zone in self.yellow_liquidation_zones_5m[symbol]:
+                fig.add_shape(
+                    type='line',
+                    x0=df_5m['timestamp'].iloc[0],
+                    x1=df_5m['timestamp'].iloc[-1],
+                    y0=zone['price'],
+                    y1=zone['price'],
+                    line=dict(
+                        color=zone['color'],
+                        width=zone['width'],
+                        dash=zone['dash']
+                    ),
+                    name=zone['description'],
+                    row=1, col=1
+                )
+                
+                fig.add_annotation(
+                    x=df_5m['timestamp'].iloc[-1],
+                    y=zone['price'],
+                    text=zone['description'],
+                    showarrow=True,
+                    arrowhead=1,
+                    ax=40,
+                    ay=0,
+                    bgcolor='rgba(255, 255, 0, 0.8)',
+                    bordercolor='#FFFF00',
+                    borderwidth=2,
+                    font=dict(color='black', size=10),
+                    row=1, col=1
+                )
+        
+        if symbol in self.orange_magnetic_zones_5m:
+            for zone in self.orange_magnetic_zones_5m[symbol]:
+                fig.add_shape(
+                    type='line',
+                    x0=df_5m['timestamp'].iloc[0],
+                    x1=df_5m['timestamp'].iloc[-1],
+                    y0=zone['price'],
+                    y1=zone['price'],
+                    line=dict(
+                        color=zone['color'],
+                        width=zone['width'],
+                        dash=zone['dash']
+                    ),
+                    name=zone['description'],
+                    row=1, col=1
+                )
+                
+                fig.add_annotation(
+                    x=df_5m['timestamp'].iloc[-1],
+                    y=zone['price'],
+                    text=zone['description'],
+                    showarrow=True,
+                    arrowhead=1,
+                    ax=40,
+                    ay=0,
+                    bgcolor='rgba(255, 165, 0, 0.8)',
+                    bordercolor='#FFA500',
+                    borderwidth=2,
+                    font=dict(color='white', size=10),
+                    row=1, col=1
+                )
+        
+        fig.add_trace(go.Bar(
+            x=df_5m['timestamp'],
+            y=df_5m['volume'],
+            name='الحجم',
+            marker_color='#7f8c8d',
+            opacity=0.7
+        ), row=2, col=1)
+        
+        if 'RSI' in df_5m.columns:
+            fig.add_trace(go.Scatter(
+                x=df_5m['timestamp'],
+                y=df_5m['RSI'],
+                name='RSI',
+                line=dict(color='#ff00ff', width=1.5)
+            ), row=3, col=1)
+            
+            fig.add_shape(
+                type='rect',
+                x0=df_5m['timestamp'].iloc[0],
+                x1=df_5m['timestamp'].iloc[-1],
+                y0=70,
+                y1=100,
+                fillcolor='rgba(255, 0, 0, 0.2)',
+                line=dict(width=0),
+                row=3, col=1
+            )
+            
+            fig.add_shape(
+                type='rect',
+                x0=df_5m['timestamp'].iloc[0],
+                x1=df_5m['timestamp'].iloc[-1],
+                y0=0,
+                y1=30,
+                fillcolor='rgba(0, 255, 0, 0.2)',
+                line=dict(width=0),
+                row=3, col=1
+            )
+        
+        fig.update_layout(
+            title=f"📊 {symbol} - 5 دقائق",
+            height=1000,
+            showlegend=True,
+            hovermode="x unified",
+            plot_bgcolor='rgba(10, 10, 30, 0.5)',
+            paper_bgcolor='rgba(10, 10, 30, 0.5)',
+            margin=dict(l=20, r=20, t=80, b=20),
+            font=dict(color='#e0f0ff'),
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            )
+        )
+        
+        fig.update_xaxes(rangeslider_visible=False, row=1, col=1)
+        
+        return fig
+    
+    def create_1m_chart(self, df_1m, symbol):
+        if df_1m is None or df_1m.empty:
+            return go.Figure()
+        
+        fig = make_subplots(
+            rows=3, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.05,
+            row_heights=[0.6, 0.2, 0.2],
+            subplot_titles=("الرسم البياني للسعر - 1 دقيقة", "الحجم", "RSI")
+        )
+        
+        fig.add_trace(go.Candlestick(
+            x=df_1m['timestamp'],
+            open=df_1m['open'],
+            high=df_1m['high'],
+            low=df_1m['low'],
+            close=df_1m['close'],
+            name='السعر',
+            increasing_line_color='#00ff88',
+            decreasing_line_color='#ff0066'
+        ), row=1, col=1)
+        
+        if symbol in self.blue_liquidity_lines_1m:
+            for line in self.blue_liquidity_lines_1m[symbol]:
+                fig.add_shape(
+                    type='line',
+                    x0=df_1m['timestamp'].iloc[0],
+                    x1=df_1m['timestamp'].iloc[-1],
+                    y0=line['price'],
+                    y1=line['price'],
+                    line=dict(
+                        color=line['color'],
+                        width=line['width'],
+                        dash=line['dash']
+                    ),
+                    name=line['description'],
+                    row=1, col=1
+                )
+                
+                fig.add_annotation(
+                    x=df_1m['timestamp'].iloc[-1],
+                    y=line['price'],
+                    text=line['description'],
+                    showarrow=True,
+                    arrowhead=1,
+                    ax=40,
+                    ay=0,
+                    bgcolor='rgba(30, 144, 255, 0.8)',
+                    bordercolor='#1E90FF',
+                    borderwidth=2,
+                    font=dict(color='white', size=8),
+                    row=1, col=1
+                )
+        
+        if symbol in self.white_liquidity_levels_1m:
+            for level in self.white_liquidity_levels_1m[symbol]:
+                fig.add_shape(
+                    type='line',
+                    x0=df_1m['timestamp'].iloc[0],
+                    x1=df_1m['timestamp'].iloc[-1],
+                    y0=level['price'],
+                    y1=level['price'],
+                    line=dict(
+                        color=level['color'],
+                        width=level['width'],
+                        dash=level['dash']
+                    ),
+                    name=level['description'],
+                    row=1, col=1
+                )
+                
+                fig.add_annotation(
+                    x=df_1m['timestamp'].iloc[-1],
+                    y=level['price'],
+                    text=level['description'],
+                    showarrow=True,
+                    arrowhead=1,
+                    ax=40,
+                    ay=0,
+                    bgcolor='rgba(255, 255, 255, 0.8)',
+                    bordercolor='white',
+                    borderwidth=2,
+                    font=dict(color='black', size=8),
+                    row=1, col=1
+                )
+        
+        if symbol in self.yellow_liquidation_zones_1m:
+            for zone in self.yellow_liquidation_zones_1m[symbol]:
+                fig.add_shape(
+                    type='line',
+                    x0=df_1m['timestamp'].iloc[0],
+                    x1=df_1m['timestamp'].iloc[-1],
+                    y0=zone['price'],
+                    y1=zone['price'],
+                    line=dict(
+                        color=zone['color'],
+                        width=zone['width'],
+                        dash=zone['dash']
+                    ),
+                    name=zone['description'],
+                    row=1, col=1
+                )
+                
+                fig.add_annotation(
+                    x=df_1m['timestamp'].iloc[-1],
+                    y=zone['price'],
+                    text=zone['description'],
+                    showarrow=True,
+                    arrowhead=1,
+                    ax=40,
+                    ay=0,
+                    bgcolor='rgba(255, 255, 0, 0.8)',
+                    bordercolor='#FFFF00',
+                    borderwidth=2,
+                    font=dict(color='black', size=8),
+                    row=1, col=1
+                )
+        
+        if symbol in self.orange_magnetic_zones_1m:
+            for zone in self.orange_magnetic_zones_1m[symbol]:
+                fig.add_shape(
+                    type='line',
+                    x0=df_1m['timestamp'].iloc[0],
+                    x1=df_1m['timestamp'].iloc[-1],
+                    y0=zone['price'],
+                    y1=zone['price'],
+                    line=dict(
+                        color=zone['color'],
+                        width=zone['width'],
+                        dash=zone['dash']
+                    ),
+                    name=zone['description'],
+                    row=1, col=1
+                )
+                
+                fig.add_annotation(
+                    x=df_1m['timestamp'].iloc[-1],
+                    y=zone['price'],
+                    text=zone['description'],
+                    showarrow=True,
+                    arrowhead=1,
+                    ax=40,
+                    ay=0,
+                    bgcolor='rgba(255, 165, 0, 0.8)',
+                    bordercolor='#FFA500',
+                    borderwidth=2,
+                    font=dict(color='white', size=8),
+                    row=1, col=1
+                )
+        
+        fig.add_trace(go.Bar(
+            x=df_1m['timestamp'],
+            y=df_1m['volume'],
+            name='الحجم',
+            marker_color='#7f8c8d',
+            opacity=0.7
+        ), row=2, col=1)
+        
+        if 'RSI' in df_1m.columns:
+            fig.add_trace(go.Scatter(
+                x=df_1m['timestamp'],
+                y=df_1m['RSI'],
+                name='RSI',
+                line=dict(color='#ff00ff', width=1.2)
+            ), row=3, col=1)
+            
+            fig.add_shape(
+                type='rect',
+                x0=df_1m['timestamp'].iloc[0],
+                x1=df_1m['timestamp'].iloc[-1],
+                y0=70,
+                y1=100,
+                fillcolor='rgba(255, 0, 0, 0.2)',
+                line=dict(width=0),
+                row=3, col=1
+            )
+            
+            fig.add_shape(
+                type='rect',
+                x0=df_1m['timestamp'].iloc[0],
+                x1=df_1m['timestamp'].iloc[-1],
+                y0=0,
+                y1=30,
+                fillcolor='rgba(0, 255, 0, 0.2)',
+                line=dict(width=0),
+                row=3, col=1
+            )
+        
+        fig.update_layout(
+            title=f"📊 {symbol} - 1 دقيقة",
+            height=1000,
+            showlegend=True,
+            hovermode="x unified",
+            plot_bgcolor='rgba(10, 10, 30, 0.5)',
+            paper_bgcolor='rgba(10, 10, 30, 0.5)',
+            margin=dict(l=20, r=20, t=80, b=20),
+            font=dict(color='#e0f0ff', size=10),
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            )
+        )
+        
+        fig.update_xaxes(rangeslider_visible=False, row=1, col=1)
+        
+        return fig
+    
+    def create_4h_chart(self, df_4h, symbol):
+        if df_4h is None or df_4h.empty:
+            return go.Figure()
+        
+        fig = make_subplots(
+            rows=3, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.05,
+            row_heights=[0.6, 0.2, 0.2],
+            subplot_titles=("الرسم البياني للسعر - 4 ساعات", "الحجم", "RSI")
+        )
+        
+        fig.add_trace(go.Candlestick(
+            x=df_4h['timestamp'],
+            open=df_4h['open'],
+            high=df_4h['high'],
+            low=df_4h['low'],
+            close=df_4h['close'],
+            name='السعر',
+            increasing_line_color='#00ff88',
+            decreasing_line_color='#ff0066'
+        ), row=1, col=1)
+        
+        # ✅ الخطوط الزرقاء - 4 ساعات
+        if symbol in self.blue_liquidity_lines_4h:
+            for line in self.blue_liquidity_lines_4h[symbol]:
+                fig.add_shape(
+                    type='line',
+                    x0=df_4h['timestamp'].iloc[0],
+                    x1=df_4h['timestamp'].iloc[-1],
+                    y0=line['price'],
+                    y1=line['price'],
+                    line=dict(
+                        color=line['color'],
+                        width=line['width'],
+                        dash=line['dash']
+                    ),
+                    name=line['description'],
+                    row=1, col=1
+                )
+                
+                fig.add_annotation(
+                    x=df_4h['timestamp'].iloc[-1],
+                    y=line['price'],
+                    text=line['description'],
+                    showarrow=True,
+                    arrowhead=1,
+                    ax=40,
+                    ay=0,
+                    bgcolor='rgba(30, 144, 255, 0.8)',
+                    bordercolor='#1E90FF',
+                    borderwidth=2,
+                    font=dict(color='white', size=10),
+                    row=1, col=1
+                )
+        
+        # ✅ الخطوط البيضاء - 4 ساعات
+        if symbol in self.white_liquidity_levels_4h:
+            for level in self.white_liquidity_levels_4h[symbol]:
+                fig.add_shape(
+                    type='line',
+                    x0=df_4h['timestamp'].iloc[0],
+                    x1=df_4h['timestamp'].iloc[-1],
+                    y0=level['price'],
+                    y1=level['price'],
+                    line=dict(
+                        color=level['color'],
+                        width=level['width'],
+                        dash=level['dash']
+                    ),
+                    name=level['description'],
+                    row=1, col=1
+                )
+                
+                fig.add_annotation(
+                    x=df_4h['timestamp'].iloc[-1],
+                    y=level['price'],
+                    text=level['description'],
+                    showarrow=True,
+                    arrowhead=1,
+                    ax=40,
+                    ay=0,
+                    bgcolor='rgba(255, 255, 255, 0.8)',
+                    bordercolor='white',
+                    borderwidth=2,
+                    font=dict(color='black', size=10),
+                    row=1, col=1
+                )
+        
+        # ✅ المناطق الصفراء - 4 ساعات
+        if symbol in self.yellow_liquidation_zones_4h:
+            for zone in self.yellow_liquidation_zones_4h[symbol]:
+                fig.add_shape(
+                    type='line',
+                    x0=df_4h['timestamp'].iloc[0],
+                    x1=df_4h['timestamp'].iloc[-1],
+                    y0=zone['price'],
+                    y1=zone['price'],
+                    line=dict(
+                        color=zone['color'],
+                        width=zone['width'],
+                        dash=zone['dash']
+                    ),
+                    name=zone['description'],
+                    row=1, col=1
+                )
+                
+                fig.add_annotation(
+                    x=df_4h['timestamp'].iloc[-1],
+                    y=zone['price'],
+                    text=zone['description'],
+                    showarrow=True,
+                    arrowhead=1,
+                    ax=40,
+                    ay=0,
+                    bgcolor='rgba(255, 255, 0, 0.8)',
+                    bordercolor='#FFFF00',
+                    borderwidth=2,
+                    font=dict(color='black', size=10),
+                    row=1, col=1
+                )
+        
+        # ✅ المناطق البرتقالية - 4 ساعات
+        if symbol in self.orange_magnetic_zones_4h:
+            for zone in self.orange_magnetic_zones_4h[symbol]:
+                fig.add_shape(
+                    type='line',
+                    x0=df_4h['timestamp'].iloc[0],
+                    x1=df_4h['timestamp'].iloc[-1],
+                    y0=zone['price'],
+                    y1=zone['price'],
+                    line=dict(
+                        color=zone['color'],
+                        width=zone['width'],
+                        dash=zone['dash']
+                    ),
+                    name=zone['description'],
+                    row=1, col=1
+                )
+                
+                fig.add_annotation(
+                    x=df_4h['timestamp'].iloc[-1],
+                    y=zone['price'],
+                    text=zone['description'],
+                    showarrow=True,
+                    arrowhead=1,
+                    ax=40,
+                    ay=0,
+                    bgcolor='rgba(255, 165, 0, 0.8)',
+                    bordercolor='#FFA500',
+                    borderwidth=2,
+                    font=dict(color='white', size=10),
+                    row=1, col=1
+                )
+        
+        fig.add_trace(go.Bar(
+            x=df_4h['timestamp'],
+            y=df_4h['volume'],
+            name='الحجم',
+            marker_color='#7f8c8d',
+            opacity=0.7
+        ), row=2, col=1)
+        
+        if 'RSI' in df_4h.columns:
+            fig.add_trace(go.Scatter(
+                x=df_4h['timestamp'],
+                y=df_4h['RSI'],
+                name='RSI',
+                line=dict(color='#ff00ff', width=1.5)
+            ), row=3, col=1)
+            
+            fig.add_shape(
+                type='rect',
+                x0=df_4h['timestamp'].iloc[0],
+                x1=df_4h['timestamp'].iloc[-1],
+                y0=70,
+                y1=100,
+                fillcolor='rgba(255, 0, 0, 0.2)',
+                line=dict(width=0),
+                row=3, col=1
+            )
+            
+            fig.add_shape(
+                type='rect',
+                x0=df_4h['timestamp'].iloc[0],
+                x1=df_4h['timestamp'].iloc[-1],
+                y0=0,
+                y1=30,
+                fillcolor='rgba(0, 255, 0, 0.2)',
+                line=dict(width=0),
+                row=3, col=1
+            )
+        
+        fig.update_layout(
+            title=f"📊 {symbol} - 4 ساعات",
+            height=1000,
+            showlegend=True,
+            hovermode="x unified",
+            plot_bgcolor='rgba(10, 10, 30, 0.5)',
+            paper_bgcolor='rgba(10, 10, 30, 0.5)',
+            margin=dict(l=20, r=20, t=80, b=20),
+            font=dict(color='#e0f0ff'),
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            )
+        )
+        
+        fig.update_xaxes(rangeslider_visible=False, row=1, col=1)
         
         return fig
 
-    def generate_auto_analysis(self, symbol, df, signal, support, resistance, liquidity_zones):
-        """إنشاء تحليل تلقائي مفصل للعملة المشفرة"""
-        if df.empty:
-            return "لا توجد بيانات كافية لإنشاء تحليل مفصل"
-            
-        current_price = df['close'].iloc[-1]
-        rsi = df['RSI'].iloc[-1]
-        macd_hist = df['MACD_hist'].iloc[-1]
-        adx = df['ADX'].iloc[-1]
-        vwap = df['VWAP'].iloc[-1]
-        volatility = self.assess_volatility(df)
-        
-        analysis = []
-        advice = []
-        warnings = []
-        
-        # التحليل العام
-        analysis.append(f"### 📊 تحليل متقدم لـ {symbol}")
-        analysis.append(f"**السعر الحالي:** {current_price:.4f} USDT")
-        
-        if signal:
-            action = "شراء" if signal['action'] == 'BUY' else "بيع"
-            analysis.append(f"**الإشارة الحالية:** {action} بثقة {signal['confidence']:.0f}%")
-        else:
-            analysis.append("**الإشارة الحالية:** لا توجد إشارة تداول قوية في هذا الوقت")
-        
-        analysis.append(f"**مؤشر RSI:** {rsi:.2f} - {'مشترى زائد' if rsi < 30 else 'منطقة شراء' if rsi < 50 else 'محايد' if rsi < 70 else 'منطقة بيع'}")
-        analysis.append(f"**ADX (قوة الاتجاه):** {adx:.2f} - {'ضعيف' if adx < 25 else 'متوسط' if adx < 50 else 'قوي'}")
-        analysis.append(f"**الموقع بالنسبة لـ VWAP:** {'أعلى' if current_price > vwap else 'أقل'} من متوسط السعر المرجح بالحجم")
-        
-        # تحليل التقلب
-        volatility_text = {
-            'extreme': 'شديد',
-            'high': 'عالي',
-            'medium': 'متوسط',
-            'low': 'منخفض'
-        }.get(volatility['level'], 'منخفض')
-        
-        analysis.append(f"**مستوى التقلب:** {volatility_text}")
-        
-        # تحليل الدعم والمقاومة
-        if support:
-            closest_support = min([(abs(current_price - s[0]), s[0], s[1]) for s in support], key=lambda x: x[0])
-            analysis.append(f"**أقرب دعم:** {closest_support[1]:.4f} (القوة: {'قوي' if closest_support[2] > 0.7 else 'متوسط' if closest_support[2] > 0.4 else 'ضعيف'})")
-        else:
-            analysis.append("**الدعم:** لا توجد مستويات دعم واضحة")
-            
-        if resistance:
-            closest_resistance = min([(abs(current_price - r[0]), r[0], r[1]) for r in resistance], key=lambda x: x[0])
-            analysis.append(f"**أقرب مقاومة:** {closest_resistance[1]:.4f} (القوة: {'قوي' if closest_resistance[2] > 0.7 else 'متوسط' if closest_resistance[2] > 0.4 else 'ضعيف'})")
-        else:
-            analysis.append("**المقاومة:** لا توجد مستويات مقاومة واضحة")
-        
-        # تحليل مناطق السيولة
-        if liquidity_zones:
-            analysis.append("**مناطق السيولة:**")
-            for zone in liquidity_zones:
-                analysis.append(f"- {zone[0]:.4f} إلى {zone[1]:.4f}")
-        else:
-            analysis.append("**مناطق السيولة:** لا توجد مناطق سيولة واضحة")
-        
-        # نصائح التداول بناءً على التحليل
-        if signal:
-            advice.append("### 💡 توصيات التداول")
-            
-            if signal['action'] == 'BUY':
-                advice.append(f"- **نقطة الدخول المثالية:** حوالي {signal['entry']:.4f}")
-                advice.append(f"- **وقف الخسارة الآمن:** ضعه عند {signal['stop_loss']:.4f} (هامش أمان 1% تحت أقرب دعم)")
-                advice.append(f"- **جني الأرباح:** الهدف الأول عند {signal['take_profit']:.4f}")
-                
-                if support:
-                    advice.append("- فكر في الدخول التدريجي عند مستويات الدعم إذا كانت متاحة")
-                
-                if signal['confidence'] > 75:
-                    advice.append("- هذه صفقة عالية الثقة، يمكنك تخصيص جزء أكبر من رأس المال")
-                elif signal['confidence'] > 60:
-                    advice.append("- هذه صفقة متوسطة الثقة، التزم بحجم مركزك المعتاد")
-                else:
-                    advice.append("- هذه صفقة منخفضة الثقة، استخدم حجم مركز أصغر من المعتاد")
-                
-                if current_price > vwap:
-                    advice.append("- السعر فوق VWAP يدعم فرضية الشراء")
-                
-                if rsi < 50:
-                    advice.append("- مؤشر RSI يشير إلى وجود مجال للحركة الصعودية")
-            else:  # إشارة بيع
-                advice.append(f"- **نقطة الدخول المثالية:** حوالي {signal['entry']:.4f}")
-                advice.append(f"- **وقف الخسارة الآمن:** ضعه عند {signal['stop_loss']:.4f} (هامش أمان 1% فوق أقرب مقاومة)")
-                advice.append(f"- **جني الأرباح:** الهدف الأول عند {signal['take_profit']:.4f}")
-                
-                if resistance:
-                    advice.append("- فكر في الدخول التدريجي عند مستويات المقاومة إذا كانت متاحة")
-                
-                if signal['confidence'] > 75:
-                    advice.append("- هذه صفقة عالية الثقة، يمكنك تخصيص جزء أكبر من رأس المال")
-                elif signal['confidence'] > 60:
-                    advice.append("- هذه صفقة متوسطة الثقة، التزم بحجم مركزك المعتاد")
-                else:
-                    advice.append("- هذه صفقة منخفضة الثقة، استخدم حجم مركز أصغر من المعتاد")
-                
-                if current_price < vwap:
-                    advice.append("- السعر تحت VWAP يدعم فرضية البيع")
-                
-                if rsi > 50:
-                    advice.append("- مؤشر RSI يشير إلى وجود مجال للحركة الهبوطية")
-            
-            advice.append(f"- **نسبة العائد/المخاطرة:** 1:{signal['risk_reward']:.2f} (ممتازة إذا كانت أعلى من 1:3)")
-        
-        # التحذيرات
-        if volatility['level'] == 'extreme':
-            warnings.append("### ⚠️ تحذيرات هامة")
-            warnings.append("- التقلب الشديد في السوق يزيد من المخاطر")
-            warnings.append("- تجنب المراكز الكبيرة في هذه الظروف")
-            warnings.append("- اضبط أوامر وقف الخسارة بعناية لتجنب التنفيذ غير المرغوب فيه")
-        elif volatility['level'] == 'high':
-            warnings.append("### ⚠️ تحذيرات هامة")
-            warnings.append("- السوق متقلب حاليًا، كن حذرًا في صفقاتك")
-            warnings.append("- قلل من حجم مركزك المعتاد بنسبة 30-50%")
-        
-        if adx < 25 and signal:
-            warnings.append("- قوة الاتجاه ضعيفة (ADX < 25)، مما يقلل من موثوقية الإشارة")
-        
-        if (signal and signal['action'] == 'BUY' and rsi > 60) or (signal and signal['action'] == 'SELL' and rsi < 40):
-            warnings.append("- مؤشر RSI في منطقة انعكاس محتملة، كن حذرًا")
-        
-        # دمج التحليل
-        full_analysis = "\n\n".join(analysis)
-        if advice:
-            full_analysis += "\n\n" + "\n\n".join(advice)
-        if warnings:
-            full_analysis += "\n\n" + "\n\n".join(warnings)
-        
-        return full_analysis
 
-    def generate_ai_assistant_advice(self, signal, df):
-        """إنشاء نصائح مساعد الذكاء الاصطناعي بناءً على إشارة التداول"""
-        if not signal:
-            return []
-            
-        advice = []
-        current_price = df['close'].iloc[-1]
-        rsi = df['RSI'].iloc[-1]
-        adx = df['ADX'].iloc[-1]
-        vwap = df['VWAP'].iloc[-1]
-        
-        if signal['action'] == 'BUY':
-            # نصائح الشراء
-            advice.append("### 🤖 نصائح مساعد الذكاء الاصطناعي")
-            
-            if signal['confidence'] > 75:
-                advice.append("🟢 **صفقة عالية الثقة**: هذه فرصة تداول ممتازة مع احتمالية نجاح عالية.")
-                advice.append("💡 يمكنك تخصيص ما يصل إلى 5% من رأس المال لهذه الصفقة.")
-            elif signal['confidence'] > 60:
-                advice.append("🟡 **صفقة متوسطة الثقة**: هذه فرصة تداول جيدة ولكنها تحتاج إلى مراقبة دقيقة.")
-                advice.append("💡 التزم بحجم مركزك المعتاد (2-3% من رأس المال).")
-            else:
-                advice.append("🔴 **صفقة منخفضة الثقة**: هذه فرصة تداول محفوفة بالمخاطر وتحتاج إلى حذر شديد.")
-                advice.append("💡 استخدم حجم مركز أصغر من المعتاد (1% أو أقل من رأس المال).")
-            
-            if current_price > vwap:
-                advice.append("📈 **السعر فوق VWAP**: هذا يعزز فرضية الشراء حيث أن الزخم صاعد.")
-            
-            if rsi < 50:
-                advice.append("📊 **RSI في منطقة الشراء**: هناك مجال للحركة الصعودية قبل الوصول إلى منطقة التشبع الشرائي.")
-            
-            if adx > 25:
-                advice.append("🚀 **اتجاه قوي**: مؤشر ADX يشير إلى وجود اتجاه قوي مما يعزز موثوقية الإشارة.")
-            
-            advice.append(f"🎯 **استراتيجية الدخول**: {signal['strategy']}")
-            
-        else:  # إشارة بيع
-            # نصائح البيع
-            advice.append("### 🤖 نصائح مساعد الذكاء الاصطناعي")
-            
-            if signal['confidence'] > 75:
-                advice.append("🟢 **صفقة عالية الثقة**: هذه فرصة تداول ممتازة مع احتمالية نجاح عالية.")
-                advice.append("💡 يمكنك تخصيص ما يصل إلى 5% من رأس المال لهذه الصفقة.")
-            elif signal['confidence'] > 60:
-                advice.append("🟡 **صفقة متوسطة الثقة**: هذه فرصة تداول جيدة ولكنها تحتاج إلى مراقبة دقيقة.")
-                advice.append("💡 التزم بحجم مركزك المعتاد (2-3% من رأس المال).")
-            else:
-                advice.append("🔴 **صفقة منخفضة الثقة**: هذه فرصة تداول محفوفة بالمخاطر وتحتاج إلى حذر شديد.")
-                advice.append("💡 استخدم حجم مركز أصغر من المعتاد (1% أو أقل من رأس المال).")
-            
-            if current_price < vwap:
-                advice.append("📉 **السعر تحت VWAP**: هذا يعزز فرضية البيع حيث أن الزخم هابط.")
-            
-            if rsi > 50:
-                advice.append("📊 **RSI في منطقة البيع**: هناك مجال للحركة الهبوطية قبل الوصول إلى منطقة التشبع البيعي.")
-            
-            if adx > 25:
-                advice.append("🚀 **اتجاه قوي**: مؤشر ADX يشير إلى وجود اتجاه قوي مما يعزز موثوقية الإشارة.")
-            
-            advice.append(f"🎯 **استراتيجية الدخول**: {signal['strategy']}")
-        
-        # إدارة المخاطر
-        advice.append("### ⚠️ إدارة المخاطر")
-        advice.append(f"🔒 **وقف الخسارة الآمن**: ضعه عند {signal['stop_loss']:.4f} (هامش أمان إضافي بنسبة 1%)")
-        advice.append(f"🎯 **جني الأرباح**: الهدف الأول عند {signal['take_profit']:.4f}")
-        advice.append(f"📊 **نسبة العائد/المخاطرة**: 1:{signal['risk_reward']:.2f} {'(ممتازة)' if signal['risk_reward'] >= 3 else '(جيدة)' if signal['risk_reward'] >= 2 else '(مقبولة)'}")
-        
-        # التقلب
-        volatility = signal.get('volatility', {}).get('level', 'low')
-        if volatility == 'extreme':
-            advice.append("🌪️ **تقلب شديد**: قلل من حجم المركز بنسبة 50% على الأقل.")
-        elif volatility == 'high':
-            advice.append("🌊 **تقلب عالي**: قلل من حجم المركز بنسبة 30%.")
-        
-        return advice
+# ============================================
+# 🔐 نظام تسجيل الدخول وإدارة المستخدمين
+# ============================================
 
-def load_main_content(analyzer):
-    """تحميل محتوى التطبيق الرئيسي"""
-    # رأس فضائي متطور
+def payment_page():
     st.markdown("""
-    <div class="ai-header neon-flicker">
-        <h1 style="font-size: 3em; margin-bottom: 10px;">CRYPTOAI PRO+ 2100</h1>
-        <p style="font-size: 1.2em; margin-bottom: 20px;">منصة تحليل العملات المشفرة بالذكاء الاصطناعي من المستقبل</p>
-        <div style="display: flex; justify-content: center; gap: 15px; margin-top: 20px;">
-            <span class="ai-chip">شبكات عصبية كمومية</span>
-            <span class="ai-chip">تحليلات تنبؤية دقيقة</span>
-            <span class="ai-chip">إشارات تداول ذكية</span>
-        </div>
+    <div style="text-align: center; padding: 30px; background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+                border-radius: 15px; margin-bottom: 30px;">
+        <h1 style="color: white;">💎 تفعيل الحساب</h1>
+        <p style="color: #e0f0ff;">للوصول إلى جميع ميزات المنصة، يرجى تفعيل حسابك</p>
     </div>
     """, unsafe_allow_html=True)
     
-    # إدخال العملة
-    col1, col2, col3 = st.columns([3, 1, 1])
-    with col1:
-        symbol = st.text_input("أدخل زوج العملة المشفرة (مثال BTC/USDT):", "BTC/USDT", key="symbol_input",
-                             help="أدخل زوج التداول الذي تريد تحليله").upper()
-    with col2:
-        days = st.selectbox("الإطار الزمني:", [7, 14, 30, 60], index=2, key="days_select")
-    with col3:
-        st.write("")
-        st.write("")
-        analyze_btn = st.button("🚀 تحليل شامل", key="analyze_btn", 
-                              help="انقر لبدء التحليل الفني المتقدم",
-                              type="primary", use_container_width=True)
+    col1, col2 = st.columns([1, 2])
     
-    if analyze_btn:
-        with st.spinner("جاري تحليل العملة وتدريب نموذج الذكاء الاصطناعي..."):
-            df = analyzer.fetch_data(symbol, days)
+    with col1:
+        st.markdown("""
+        <div style="background: rgba(30, 60, 114, 0.3); padding: 20px; border-radius: 10px;
+                    border: 2px solid #00ff88;">
+            <h3 style="color: #00ff88;">📋 مميزات الاشتراك</h3>
+            <ul style="color: #e0f0ff;">
+                <li>📊 شموع 5 أطر زمنية</li>
+                <li>🔵 خطوط سيولة زرقاء</li>
+                <li>⚪ مستويات قوية بيضاء</li>
+                <li>🟡 مناطق تصفية صفراء</li>
+                <li>🟠 مناطق جذب برتقالية</li>
+                <li>📈 تحديثات لحظية</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("""
+        <div style="background: rgba(30, 60, 114, 0.3); padding: 20px; border-radius: 10px;">
+            <h3 style="color: #ffaa00;">💰 طريقة الدفع</h3>
+            <p style="color: #e0f0ff;">
+                1️⃣ تواصل معي على تلغرام:<br>
+                <a href="https://t.me/SOFIAN232" target="_blank" 
+                   style="color: #00ff88; font-size: 1.2em;">
+                    @SOFIAN232
+                </a>
+            </p>
+            <p style="color: #e0f0ff;">
+                2️⃣ أرسل مبلغ الاشتراك:<br>
+                <span style="color: #ffaa00; font-size: 1.5em;">💵 10$</span>
+                <span style="color: #888;">(شهرياً)</span>
+            </p>
+            <p style="color: #e0f0ff;">
+                3️⃣ أرسل لي اسم المستخدم الخاص بك:<br>
+                <span style="color: #00ff88;">📝 username: {your_username}</span>
+            </p>
+            <div style="background: rgba(255, 165, 0, 0.1); padding: 15px; border-radius: 10px;
+                        border: 1px solid #ffaa00; margin-top: 15px;">
+                <p style="color: #ffaa00; text-align: center;">
+                    ⏳ بعد الدفع، سيتم تفعيل حسابك خلال 24 ساعة
+                </p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if st.session_state.get('username'):
+            username = st.session_state['username']
+            user_manager = UserManager()
+            user_data = user_manager.users.get(username, {})
             
-            if df is not None and len(df) > 50:
-                df = analyzer.calculate_indicators(df)
-                support, resistance = analyzer.find_support_resistance(df)
-                liquidity_zones = analyzer.find_liquidity_zones(df)
-                predicted_price = analyzer.predict(symbol, df)
-                signal = analyzer.generate_trade_signal(df, predicted_price, support, resistance, liquidity_zones)
-                analyzer.current_signal = signal
-                analyzer.analysis_complete = True
-                
-                st.success("تم التحليل بنجاح!")
-                
-                tab1, tab2, tab3 = st.tabs([
-                    "🚀 إشارة التداول", 
-                    "📈 التحليل البياني", 
-                    "🏦 المستويات الرئيسية"
-                ])
-                
-                with tab1:
-                    if signal:
-                        st.subheader("🎯 إشارة تداول من الذكاء الاصطناعي")
-                        
-                        # عرض الإشارة بوضوح
-                        action_text = "شراء" if signal['action'] == 'BUY' else "بيع"
-                        action_class = "buy" if signal['action'] == 'BUY' else "sell"
-                        
-                        st.markdown(f"""
-                        <div class="signal-box {action_class}">
-                            <h2 style="margin:0;text-transform:uppercase;font-size:1.8em;">إشارة {action_text}</h2>
-                            <p style="margin:5px 0;font-size:1.2em;">الأصل: {symbol}</p>
-                            <p style="margin:5px 0;font-size:1.1em;">الإستراتيجية: {signal.get('strategy', 'N/A')}</p>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        
-                        # عرض ثقة الإشارة
-                        confidence_class = "high" if signal['confidence'] > 75 else "medium" if signal['confidence'] > 60 else "low"
-                        st.markdown(f"""
-                        <div class="signal-confidence {confidence_class}">
-                            {signal['confidence']:.0f}%
-                            <div style="font-size:0.5em;margin-top:5px;">ثقة الإشارة</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        
-                        # عرض نقاط التداول
-                        cols = st.columns(4)
-                        cols[0].metric("السعر الحالي", f"{signal['current_price']:.4f}", 
-                                     help="السعر الحالي للعملة", 
-                                     label_visibility="visible")
-                        cols[1].metric("السعر المتوقع", f"{signal['predicted_price']:.4f}", 
-                                      f"{((signal['predicted_price'] - signal['current_price'])/signal['current_price']*100):.2f}%",
-                                      delta_color="normal",
-                                      help="التنبؤ بالسعر بعد 4 ساعات")
-                        cols[2].metric("نقطة الدخول", f"{signal['entry']:.4f}", 
-                                      help="السعر الموصى به لفتح المركز")
-                        cols[3].metric("العائد/المخاطرة", f"1:{signal['risk_reward']:.2f}", 
-                                      help="نسبة العائد المتوقع إلى المخاطرة")
-                        
-                        # تنسيق الأرقام باللون الأبيض
-                        st.markdown("""
-                        <style>
-                            .stMetricLabel, .stMetricValue, .stMetricDelta {
-                                color: white !important;
-                            }
-                            .stMetricLabel {
-                                font-size: 1.1em !important;
-                                font-weight: bold !important;
-                            }
-                            .stMetricValue {
-                                font-size: 1.4em !important;
-                                font-weight: bold !important;
-                            }
-                            .stMetricDelta {
-                                font-size: 1em !important;
-                            }
-                        </style>
-                        """, unsafe_allow_html=True)
-                        
-                        # عرض وقف الخسارة وجني الأرباح
-                        cols = st.columns(2)
-                        cols[0].metric("وقف الخسارة الآمن", f"{signal['stop_loss']:.4f}", 
-                                      f"-{abs((signal['entry'] - signal['stop_loss'])/signal['entry']*100):.2f}%",
-                                      delta_color="inverse",
-                                      help="نقطة وقف الخسارة الموصى بها (3-4% حسب التقلبات)")
-                        cols[1].metric("جني الأرباح", f"{signal['take_profit']:.4f}", 
-                                      f"+{abs((signal['take_profit'] - signal['entry'])/signal['entry']*100):.2f}%",
-                                      help="هدف جني الأرباح الموصى به (5-6% حسب التقلبات)")
-                        
-                        # عرض تحليل التقلب
-                        volatility = signal.get('volatility', {})
-                        volatility_level = volatility.get('level', 'low')
-                        volatility_text = {
-                            'extreme': 'شديد',
-                            'high': 'عالي',
-                            'medium': 'متوسط',
-                            'low': 'منخفض'
-                        }.get(volatility_level, 'منخفض')
-                        
-                        volatility_class = {
-                            'extreme': 'risk-high',
-                            'high': 'risk-medium',
-                            'medium': 'risk-medium',
-                            'low': 'risk-low'
-                        }.get(volatility_level, 'risk-low')
-                        
-                        st.markdown("### 📊 تقييم تقلب السوق")
-                        st.markdown(f"""
-                        <div class="{volatility_class} risk-level">
-                            {signal.get('risk_note', 'N/A')}
-                        </div>
-                        """, unsafe_allow_html=True)
-                        
-                        # عرض مؤشرات التقلب
-                        atr = volatility['indicators']['ATR']
-                        bb_width = volatility['indicators']['BB_Width']
-                        price_change = volatility['indicators']['Price_Change_4h']
-                        volume_spike = volatility['indicators']['Volume_Spike']
-                        
-                        cols = st.columns(4)
-                        cols[0].metric("ATR", f"{atr['value']:.4f}", 
-                                      f"{'عالي' if atr['assessment'] == 'high' else 'متوسط' if atr['assessment'] == 'medium' else 'منخفض'}",
-                                      help="متوسط المدى الحقيقي (مقياس التقلب)")
-                        cols[1].metric("عرض بولينجر", f"{bb_width['value']:.4f}", 
-                                      f"{'عالي' if bb_width['assessment'] == 'high' else 'متوسط' if bb_width['assessment'] == 'medium' else 'منخفض'}",
-                                      help="عرض نطاق بولينجر (مقياس التقلب)")
-                        cols[2].metric("تغير 4 ساعات", f"{price_change['value']:.2f}%", 
-                                      f"{'عالي' if price_change['assessment'] == 'high' else 'متوسط' if price_change['assessment'] == 'medium' else 'منخفض'}",
-                                      help="تغير السعر في آخر 4 ساعات")
-                        cols[3].metric("ارتفاع الحجم", f"{volume_spike['value']:.2f}x", 
-                                      f"{'عالي' if volume_spike['assessment'] == 'high' else 'متوسط' if volume_spike['assessment'] == 'medium' else 'منخفض'}",
-                                      help="حجم التداول مقارنة بالمتوسط")
-                        
-                        # عرض نصائح مساعد الذكاء الاصطناعي
-                        st.markdown("### 🤖 مساعد التداول الذكي")
-                        ai_advice = analyzer.generate_ai_assistant_advice(signal, df)
-                        
-                        for advice in ai_advice:
-                            if advice.startswith("###"):
-                                st.markdown(advice, unsafe_allow_html=True)
+            if user_data.get('payment_status') == 'pending':
+                st.warning("⏳ حسابك في انتظار التفعيل من قبل المسؤول")
+            elif user_data.get('payment_status') == 'paid':
+                st.success("✅ حسابك مفعل! يمكنك استخدام جميع الميزات")
+                if user_data.get('expiry_date'):
+                    st.info(f"📅 تنتهي الصلاحية: {user_data['expiry_date'][:10]}")
+
+
+def login_page(user_manager):
+    st.markdown("""
+    <div style="text-align: center; padding: 30px;">
+        <h1 style="font-size: 3em;">🔐 تسجيل الدخول</h1>
+        <p style="font-size: 1.2em; color: #888;">قم بتسجيل الدخول للوصول إلى منصة التحليل المتقدم</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        with st.container():
+            st.markdown("""
+            <div style="background: rgba(30, 60, 114, 0.3); padding: 30px; border-radius: 15px; 
+                        border: 1px solid rgba(255,255,255,0.1);">
+            """, unsafe_allow_html=True)
+            
+            tab1, tab2 = st.tabs(["🔑 تسجيل الدخول", "📝 إنشاء حساب جديد"])
+            
+            with tab1:
+                with st.form("login_form"):
+                    username = st.text_input("👤 اسم المستخدم", placeholder="أدخل اسم المستخدم")
+                    password = st.text_input("🔒 كلمة المرور", type="password", placeholder="أدخل كلمة المرور")
+                    
+                    col_btn1, col_btn2 = st.columns([1, 1])
+                    with col_btn1:
+                        submit_login = st.form_submit_button("🚀 تسجيل الدخول", use_container_width=True)
+                    
+                    with col_btn2:
+                        st.write("")
+                    
+                    if submit_login:
+                        if username and password:
+                            success, message = user_manager.login_user(username, password)
+                            if success:
+                                st.session_state['logged_in'] = True
+                                st.session_state['username'] = username
+                                st.session_state['is_admin'] = user_manager.is_admin(username)
+                                st.success(message)
+                                st.rerun()
                             else:
-                                st.markdown(f"""
-                                <div class="assistant-message">
-                                    {advice}
-                                </div>
-                                """, unsafe_allow_html=True)
-                        
+                                st.error(message)
+                        else:
+                            st.warning("⚠️ الرجاء إدخال اسم المستخدم وكلمة المرور")
+            
+            with tab2:
+                with st.form("register_form"):
+                    new_username = st.text_input("👤 اسم المستخدم", placeholder="اختر اسم مستخدم (3 أحرف على الأقل)")
+                    new_password = st.text_input("🔒 كلمة المرور", type="password", placeholder="اختر كلمة مرور (4 أحرف على الأقل)")
+                    new_email = st.text_input("📧 البريد الإلكتروني (اختياري)", placeholder="example@email.com")
+                    
+                    submit_register = st.form_submit_button("📝 إنشاء حساب", use_container_width=True)
+                    
+                    if submit_register:
+                        if new_username and new_password:
+                            success, message = user_manager.register_user(new_username, new_password, new_email)
+                            if success:
+                                st.success(message)
+                                st.info("📝 سيتم تفعيل حسابك بعد الدفع عبر تلغرام")
+                            else:
+                                st.error(message)
+                        else:
+                            st.warning("⚠️ الرجاء إدخال اسم المستخدم وكلمة المرور")
+            
+            st.markdown("</div>", unsafe_allow_html=True)
+    
+    with st.expander("ℹ️ معلومات الدفع"):
+        st.info("""
+        **💰 طريقة الاشتراك:**
+        1. أنشئ حساباً على المنصة
+        2. تواصل معي على تلغرام: [@SOFIAN232](https://t.me/SOFIAN232)
+        3. أرسل مبلغ 10$ (شهرياً)
+        4. أرسل اسم المستخدم الخاص بك
+        5. سيتم تفعيل حسابك خلال 24 ساعة
+        
+        **💎 مميزات الاشتراك:**
+        - شموع 5 أطر زمنية
+        - خطوط سيولة زرقاء
+        - مستويات قوية بيضاء
+        - مناطق تصفية صفراء
+        - مناطق جذب برتقالية
+        """)
+
+
+def admin_panel(user_manager):
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+                padding: 20px; border-radius: 10px; margin-bottom: 20px;">
+        <h2 style="color: white; text-align: center;">🛡️ لوحة تحكم المسؤول</h2>
+        <p style="color: #e0f0ff; text-align: center;">إدارة المستخدمين والتفعيل</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    users = user_manager.get_all_users()
+    
+    total = len(users)
+    active = sum(1 for u in users.values() if u.get('active', False))
+    pending = sum(1 for u in users.values() if not u.get('active', False) and not u.get('is_admin', False))
+    admin_count = sum(1 for u in users.values() if u.get('is_admin', False))
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("👥 إجمالي المستخدمين", total)
+    with col2:
+        st.metric("🟢 نشطين", active)
+    with col3:
+        st.metric("🟡 في انتظار التفعيل", pending)
+    with col4:
+        st.metric("👑 مسؤولين", admin_count)
+    
+    # 📋 المستخدمين المنتظرين
+    st.markdown("### 🟡 المستخدمين المنتظرين للتفعيل")
+    
+    pending_users = user_manager.get_pending_users()
+    
+    if pending_users:
+        for username, data in pending_users.items():
+            col1, col2, col3 = st.columns([2, 2, 1])
+            with col1:
+                st.write(f"**👤 {username}**")
+                st.caption(f"📧 {data.get('email', 'لا يوجد')}")
+                st.caption(f"📅 سجل: {data.get('created_at', '')[:16]}")
+            with col2:
+                st.write("💰 **في انتظار الدفع**")
+                st.caption("⏳ ينتظر التفعيل")
+            with col3:
+                if st.button(f"✅ تفعيل {username}", key=f"activate_{username}"):
+                    success, message = user_manager.activate_user(username)
+                    if success:
+                        st.success(message)
+                        st.rerun()
                     else:
-                        st.warning("⚠️ لا توجد إشارة تداول قوية في هذا الوقت")
-                        st.info("""
-                        <div class="ai-panel">
-                            <h4 style="margin-top:0;">أسباب محتملة:</h4>
-                            <ul style="margin:0;padding-left:20px;">
-                                <li style="margin-bottom:8px;">السوق في نطاق جانبي (تداول في قناة ضيقة)</li>
-                                <li style="margin-bottom:8px;">المؤشرات الفنية غير حاسمة</li>
-                                <li style="margin-bottom:8px;">لا توجد مستويات دعم/مقاومة واضحة</li>
-                                <li style="margin-bottom:8px;">تقلب عالي في السوق</li>
-                                <li>ضعف قوة الاتجاه (ADX أقل من 25)</li>
-                            </ul>
-                        </div>
-                        """, unsafe_allow_html=True)
-                
-                with tab2:
-                    st.subheader("📈 التحليل البياني المتقدم")
-                    fig = analyzer.create_main_chart(df, support, resistance, liquidity_zones, predicted_price, symbol)
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                with tab3:
-                    st.subheader("🏦 مستويات الدعم والمقاومة الرئيسية")
-                    
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        st.markdown("### 🛡️ مستويات الدعم")
-                        if support:
-                            for level, strength in sorted(support, key=lambda x: x[0], reverse=True):
-                                distance_pct = (df['close'].iloc[-1] - level) / level * 100
-                                strength_class = "high-strength" if strength > 0.7 else "medium-strength" if strength > 0.4 else "low-strength"
-                                strength_text = "قوي" if strength > 0.7 else "متوسط" if strength > 0.4 else "ضعيف"
-                                
-                                st.markdown(f"""
-                                <div class="card support-level">
-                                    <h4 style="margin-top:0;">{level:.4f}</h4>
-                                    <p>المسافة من السعر الحالي: 
-                                        <span class="{'price-change-negative' if distance_pct < 0 else 'price-change-positive'}">
-                                            {abs(distance_pct):.2f}%
-                                        </span>
-                                    </p>
-                                    <p>قوة المستوى: 
-                                        <span class="level-strength {strength_class}">{strength_text}</span>
-                                    </p>
-                                </div>
-                                """, unsafe_allow_html=True)
-                        else:
-                            st.warning("لا توجد مستويات دعم واضحة")
-                    
-                    with col2:
-                        st.markdown("### 🚧 مستويات المقاومة")
-                        if resistance:
-                            for level, strength in sorted(resistance, key=lambda x: x[0]):
-                                distance_pct = (level - df['close'].iloc[-1]) / df['close'].iloc[-1] * 100
-                                strength_class = "high-strength" if strength > 0.7 else "medium-strength" if strength > 0.4 else "low-strength"
-                                strength_text = "قوي" if strength > 0.7 else "متوسط" if strength > 0.4 else "ضعيف"
-                                
-                                st.markdown(f"""
-                                <div class="card resistance-level">
-                                    <h4 style="margin-top:0;">{level:.4f}</h4>
-                                    <p>المسافة من السعر الحالي: 
-                                        <span class="{'price-change-negative' if distance_pct < 0 else 'price-change-positive'}">
-                                            {abs(distance_pct):.2f}%
-                                        </span>
-                                    </p>
-                                    <p>قوة المستوى: 
-                                        <span class="level-strength {strength_class}">{strength_text}</span>
-                                    </p>
-                                </div>
-                                """, unsafe_allow_html=True)
-                        else:
-                            st.warning("لا توجد مستويات مقاومة واضحة")
-                    
-                    with col3:
-                        st.markdown("### 💧 مناطق السيولة")
-                        if liquidity_zones:
-                            for zone in liquidity_zones:
-                                price_range_pct = (zone[1] - zone[0]) / zone[0] * 100
-                                st.markdown(f"""
-                                <div class="card liquidity-zone">
-                                    <h4 style="margin-top:0;">{zone[0]:.4f} - {zone[1]:.4f}</h4>
-                                    <p>نطاق السعر: {price_range_pct:.2f}%</p>
-                                    <p>الحجم: تركيز عالي</p>
-                                    <div class="gauge-container">
-                                        <div class="gauge">
-                                            <div class="gauge-fill" style="width:{min(price_range_pct*3, 100)}%"></div>
-                                        </div>
-                                    </div>
-                                </div>
-                                """, unsafe_allow_html=True)
-                        else:
-                            st.warning("لا توجد مناطق سيولة واضحة")
-                    
-                    # تمثيل مرئي للمستويات
-                    if support or resistance:
-                        st.markdown("---")
-                        st.subheader("📊 تمثيل مرئي للمستويات الرئيسية")
+                        st.error(message)
+    else:
+        st.info("✅ لا يوجد مستخدمين في انتظار التفعيل")
+    
+    # 📋 المستخدمين النشطين
+    st.markdown("### 🟢 المستخدمين النشطين")
+    
+    active_users = user_manager.get_active_users()
+    
+    if active_users:
+        for username, data in active_users.items():
+            col1, col2, col3 = st.columns([2, 2, 1])
+            with col1:
+                st.write(f"**👤 {username}**")
+                st.caption(f"📧 {data.get('email', 'لا يوجد')}")
+            with col2:
+                st.write("✅ **مفعل**")
+                if data.get('expiry_date'):
+                    st.caption(f"📅 ينتهي: {data['expiry_date'][:10]}")
+            with col3:
+                if st.button(f"🔴 تعطيل {username}", key=f"deactivate_{username}"):
+                    success, message = user_manager.deactivate_user(username)
+                    if success:
+                        st.success(message)
+                        st.rerun()
+                    else:
+                        st.error(message)
+    
+    # 📋 جميع المستخدمين
+    with st.expander("📋 عرض جميع المستخدمين"):
+        users_data = []
+        for username, data in users.items():
+            status = "🟢 نشط" if data.get('active', False) else "🟡 في انتظار التفعيل"
+            if data.get('is_admin', False):
+                status = "👑 مسؤول"
+            
+            users_data.append({
+                "اسم المستخدم": username,
+                "الحالة": status,
+                "البريد": data.get('email', '-'),
+                "تاريخ التسجيل": data.get('created_at', '-')[:16] if data.get('created_at') else '-',
+                "تاريخ الدفع": data.get('payment_date', '-')[:16] if data.get('payment_date') else '-'
+            })
+        
+        if users_data:
+            df_users = pd.DataFrame(users_data)
+            st.dataframe(df_users, use_container_width=True)
+
+
+# ============================================
+# 🎯 واجهة التحليل الرئيسية
+# ============================================
+
+def analysis_interface():
+    st.markdown("""
+    <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); 
+                border-radius: 15px; margin-bottom: 30px;">
+        <h1 style="color: white;">🧠 محلل السيولة المتقدم</h1>
+        <p style="color: #e0f0ff;">شموع + خطوط سيولة + مناطق تصفية + جذب مغناطيسي</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    analyzer = CryptoAnalyzer()
+    
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        symbol = st.text_input("💰 أدخل زوج العملات:", "BTC/USDT").upper()
+    
+    with col2:
+        st.write("")
+        if st.button("🚀 تحليل", type="primary", use_container_width=True):
+            if check_rate_limit():
+                st.session_state['run_analysis'] = True
+    
+    if st.session_state.get('run_analysis', False):
+        st.session_state['run_analysis'] = False
+        
+        with st.spinner(f"🔄 جاري تحليل {symbol}..."):
+            # جلب جميع الأطر الزمنية
+            df_1h, df_4h = analyzer.fetch_data(symbol)
+            df_15m = analyzer.fetch_data_15m(symbol)
+            df_5m = analyzer.fetch_data_5m(symbol)
+            df_1m = analyzer.fetch_data_1m(symbol)
+            
+            timeframes = {
+                '4h': df_4h,
+                '1h': df_1h,
+                '15m': df_15m,
+                '5m': df_5m,
+                '1m': df_1m
+            }
+            
+            # إنشاء التبويبات
+            tabs = st.tabs(["⏰ 4 ساعات", "📈 1 ساعة", "⏱️ 15 دقيقة", "⏱️ 5 دقائق", "⏱️ 1 دقيقة"])
+            
+            for tab, (tf, df) in zip(tabs, timeframes.items()):
+                with tab:
+                    if df is not None and not df.empty:
+                        if tf == '4h':
+                            fig = analyzer.create_4h_chart(df, symbol)
+                        elif tf == '1h':
+                            fig = analyzer.create_main_chart(df, symbol)
+                        elif tf == '15m':
+                            fig = analyzer.create_15m_chart(df, symbol)
+                        elif tf == '5m':
+                            fig = analyzer.create_5m_chart(df, symbol)
+                        elif tf == '1m':
+                            fig = analyzer.create_1m_chart(df, symbol)
                         
-                        levels_fig = go.Figure()
-                        
-                        # السعر
-                        levels_fig.add_trace(go.Scatter(
-                            x=df['timestamp'],
-                            y=df['close'],
-                            name='السعر',
-                            line=dict(color='#00f0ff', width=2)
-                        ))
-                        
-                        # الدعم
-                        for level, strength in support:
-                            levels_fig.add_shape(type='line',
-                                x0=df['timestamp'].iloc[0], y0=level,
-                                x1=df['timestamp'].iloc[-1], y1=level,
-                                line=dict(color='#00ff88', width=2, dash='dash'),
-                                name=f'دعم {level:.2f}')
-                            
-                            levels_fig.add_trace(go.Scatter(
-                                x=[df['timestamp'].iloc[-1]],
-                                y=[level],
-                                mode='markers+text',
-                                marker=dict(size=12, color='#00ff88'),
-                                text=[f' دعم {level:.2f}'],
-                                textposition="middle right",
-                                showlegend=False
-                            ))
-                        
-                        # المقاومة
-                        for level, strength in resistance:
-                            levels_fig.add_shape(type='line',
-                                x0=df['timestamp'].iloc[0], y0=level,
-                                x1=df['timestamp'].iloc[-1], y1=level,
-                                line=dict(color='#ff0066', width=2, dash='dash'),
-                                name=f'مقاومة {level:.2f}')
-                            
-                            levels_fig.add_trace(go.Scatter(
-                                x=[df['timestamp'].iloc[-1]],
-                                y=[level],
-                                mode='markers+text',
-                                marker=dict(size=12, color='#ff0066'),
-                                text=[f' مقاومة {level:.2f}'],
-                                textposition="middle right",
-                                showlegend=False
-                            ))
-                        
-                        levels_fig.update_layout(
-                            title="تصور مستويات الدعم والمقاومة",
-                            height=500,
-                            showlegend=True,
-                            hovermode="x unified",
-                            plot_bgcolor='rgba(10, 10, 30, 0.5)',
-                            paper_bgcolor='rgba(10, 10, 30, 0.5)',
-                            margin=dict(l=20, r=20, t=60, b=20),
-                            font=dict(color='#e0f0ff'),
-                            legend=dict(
-                                orientation="h",
-                                yanchor="bottom",
-                                y=1.02,
-                                xanchor="right",
-                                x=1,
-                                font=dict(color='#e0f0ff')
-                            )
-                        )
-                        
-                        st.plotly_chart(levels_fig, use_container_width=True)
-                
-                # الشريط الجانبي مع الروبوت والملاحظات
-                with st.sidebar:
-                    st.markdown("""
-                    <div class="sidebar-robot-container">
-                        <img src="https://cdn-icons-png.flaticon.com/512/4712/4712035.png" class="sidebar-robot">
-                        <h3>مساعد التداول الآلي</h3>
-                        <div class="status-pulse"></div>
-                        <span>نظام الذكاء الاصطناعي نشط</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    st.markdown("### 📝 ملاحظات التحليل")
-                    
-                    if signal:
-                        st.markdown(f"""
-                        <div class="sidebar-notes">
-                            <div class="sidebar-note">
-                                <strong>الإشارة الحالية:</strong> {'شراء' if signal['action'] == 'BUY' else 'بيع'}
-                            </div>
-                            <div class="sidebar-note">
-                                <strong>الثقة:</strong> {signal['confidence']:.0f}%
-                            </div>
-                            <div class="sidebar-note">
-                                <strong>الإستراتيجية:</strong> {signal['strategy']}
-                            </div>
-                            <div class="sidebar-note">
-                                <strong>العائد/المخاطرة:</strong> 1:{signal['risk_reward']:.2f}
-                            </div>
-                            <div class="sidebar-note">
-                                <strong>التقلب:</strong> {'شديد' if signal['volatility']['level'] == 'extreme' else 'عالي' if signal['volatility']['level'] == 'high' else 'متوسط' if signal['volatility']['level'] == 'medium' else 'منخفض'}
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        
-                        # عرض نصائح مساعد الذكاء الاصطناعي في الشريط الجانبي
-                        st.markdown("### 💡 نصائح المساعد")
-                        ai_advice = analyzer.generate_ai_assistant_advice(signal, df)
-                        
-                        for advice in ai_advice:
-                            if not advice.startswith("###"):
-                                st.markdown(f"""
-                                <div class="sidebar-notes">
-                                    <div class="sidebar-note">• {advice}</div>
-                                </div>
-                                """, unsafe_allow_html=True)
-            else:
-                st.error("فشل في جلب بيانات كافية للعملة المشفرة المحددة")
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.error(f"❌ لا توجد بيانات لـ {tf}")
+
+
+# ============================================
+# 🚀 الدالة الرئيسية
+# ============================================
 
 def main():
-    analyzer = CryptoPredictor2100()
-    load_main_content(analyzer)
+    if 'logged_in' not in st.session_state:
+        st.session_state['logged_in'] = False
+    if 'username' not in st.session_state:
+        st.session_state['username'] = None
+    if 'is_admin' not in st.session_state:
+        st.session_state['is_admin'] = False
+    if 'run_analysis' not in st.session_state:
+        st.session_state['run_analysis'] = False
+    
+    user_manager = UserManager()
+    
+    if not st.session_state['logged_in']:
+        login_page(user_manager)
+        return
+    
+    username = st.session_state['username']
+    is_admin = st.session_state['is_admin']
+    
+    if not is_admin:
+        user_data = user_manager.users.get(username, {})
+        if not user_data.get('active', False):
+            payment_page()
+            return
+    
+    with st.sidebar:
+        st.markdown("""
+        <div style="text-align: center; padding: 10px;">
+            <h2>🧠 المحلل المتقدم</h2>
+            <hr>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown(f"""
+        <div style="background: rgba(30, 60, 114, 0.3); padding: 15px; border-radius: 10px; margin-bottom: 20px;">
+            <p>👤 **المستخدم:** {username}</p>
+            <p>🔑 **الصلاحية:** {"👑 مسؤول" if is_admin else "👤 مستخدم"}</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if st.button("🚪 تسجيل الخروج", use_container_width=True):
+            st.session_state['logged_in'] = False
+            st.session_state['username'] = None
+            st.session_state['is_admin'] = False
+            st.rerun()
+        
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("### 📊 القائمة")
+    
+    if is_admin:
+        tab_admin, tab_analysis = st.tabs(["🛡️ لوحة تحكم المسؤول", "📊 التحليل"])
+        with tab_admin:
+            admin_panel(user_manager)
+        with tab_analysis:
+            analysis_interface()
+    else:
+        analysis_interface()
+
 
 if __name__ == "__main__":
     main()
