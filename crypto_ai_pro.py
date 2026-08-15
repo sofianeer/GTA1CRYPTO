@@ -280,7 +280,6 @@ class UserManager:
                 conn.close()
                 return False, "❌ User not found!"
             
-            # إذا كان المستخدم مفعّل بالفعل
             if user[3] == 1:
                 conn.close()
                 return False, f"✅ {username} is already active!"
@@ -310,7 +309,6 @@ class UserManager:
                 conn.close()
                 return False, "❌ User not found!"
             
-            # إذا كان المستخدم غير مفعّل بالفعل
             if user[3] == 0:
                 conn.close()
                 return False, f"⚠️ {username} is already deactivated!"
@@ -327,7 +325,6 @@ class UserManager:
             return False, f"❌ Error: {str(e)}"
     
     def delete_user(self, username):
-        """حذف المستخدم نهائياً"""
         if username == ADMIN_USERNAME:
             return False, "❌ Cannot delete admin!"
         
@@ -357,7 +354,6 @@ class UserManager:
                 conn.close()
                 return False, "❌ User not found!"
             
-            # إذا كان المستخدم غير مفعّل، نفعّله أولاً
             if result[1] == 0:
                 cursor.execute('''
                     UPDATE users 
@@ -365,10 +361,8 @@ class UserManager:
                     WHERE username=?
                 ''', (username,))
             
-            # تمديد الصلاحية
             if result[0]:
                 current_expiry = datetime.fromisoformat(result[0])
-                # إذا انتهت الصلاحية، نبدأ من اليوم
                 if current_expiry < datetime.now():
                     new_expiry = datetime.now() + timedelta(days=days)
                 else:
@@ -480,17 +474,6 @@ class UserManager:
             return total, active, pending, admin
         except:
             return 0, 0, 0, 0
-    
-    def get_user_expiry(self, username):
-        try:
-            conn = sqlite3.connect(self.db_file)
-            cursor = conn.cursor()
-            cursor.execute("SELECT expiry_date FROM users WHERE username=?", (username,))
-            result = cursor.fetchone()
-            conn.close()
-            return result[0] if result and result[0] else None
-        except:
-            return None
 
 # ============================================
 # 🎯 Liquidation Zones Detector
@@ -3304,7 +3287,7 @@ def admin_panel(user_manager):
     
     if pending_users:
         for username, data in pending_users.items():
-            col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+            col1, col2, col3, col4, col5 = st.columns([2, 2, 1, 1, 1])
             with col1:
                 st.write(f"**👤 {username}**")
                 st.caption(f"📧 {data.get('email', 'None')}")
@@ -3319,6 +3302,14 @@ def admin_panel(user_manager):
                     else:
                         st.error(message)
             with col4:
+                if st.button(f"❌ Deactivate", key=f"deact_pending_{username}"):
+                    success, message = user_manager.deactivate_user(username)
+                    if success:
+                        st.success(message)
+                        st.rerun()
+                    else:
+                        st.error(message)
+            with col5:
                 if st.button(f"🗑️ Delete", key=f"delete_{username}"):
                     success, message = user_manager.delete_user(username)
                     if success:
@@ -3329,14 +3320,13 @@ def admin_panel(user_manager):
     else:
         st.info("✅ No pending users")
     
-    # ========== 📋 All Users مع أزرار كاملة ==========
+    st.markdown("---")
     st.markdown("### 📋 All Users")
     
     all_users = user_manager.get_all_users()
     
     if all_users:
-        # رأس الجدول
-        col1, col2, col3, col4, col5, col6, col7 = st.columns([1.5, 1, 1.5, 1.5, 1, 1, 1])
+        col1, col2, col3, col4, col5, col6, col7, col8 = st.columns([1.2, 1, 1.2, 1.5, 1, 1, 1, 1])
         with col1:
             st.write("**Username**")
         with col2:
@@ -3350,16 +3340,17 @@ def admin_panel(user_manager):
         with col6:
             st.write("**Deactivate**")
         with col7:
+            st.write("**Extend**")
+        with col8:
             st.write("**Delete**")
         
         st.divider()
         
         for username, data in all_users.items():
-            # تخطي المدير الرئيسي
             if username == ADMIN_USERNAME:
                 continue
             
-            col1, col2, col3, col4, col5, col6, col7 = st.columns([1.5, 1, 1.5, 1.5, 1, 1, 1])
+            col1, col2, col3, col4, col5, col6, col7, col8 = st.columns([1.2, 1, 1.2, 1.5, 1, 1, 1, 1])
             
             with col1:
                 st.write(f"**{username}**")
@@ -3396,7 +3387,7 @@ def admin_panel(user_manager):
                         else:
                             st.error(message)
                 elif data.get('active', False):
-                    st.write("✅ Active")
+                    st.write("✅")
                 else:
                     st.write("—")
             with col6:
@@ -3409,10 +3400,21 @@ def admin_panel(user_manager):
                         else:
                             st.error(message)
                 elif not data.get('active', False):
-                    st.write("⏳ Inactive")
+                    st.write("⏳")
                 else:
                     st.write("—")
             with col7:
+                if not data.get('is_admin', False):
+                    if st.button(f"📅 Extend", key=f"ext_{username}"):
+                        success, message = user_manager.extend_subscription(username, 30)
+                        if success:
+                            st.success(message)
+                            st.rerun()
+                        else:
+                            st.error(message)
+                else:
+                    st.write("—")
+            with col8:
                 if not data.get('is_admin', False):
                     if st.button(f"🗑️ Delete", key=f"del_{username}"):
                         success, message = user_manager.delete_user(username)
@@ -3426,7 +3428,7 @@ def admin_panel(user_manager):
     else:
         st.info("📭 No users found")
     
-    # ========== 🔧 أدوات إضافية ==========
+    st.markdown("---")
     st.markdown("### 🔧 Admin Tools")
     
     col1, col2 = st.columns(2)
