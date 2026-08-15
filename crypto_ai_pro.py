@@ -4,17 +4,12 @@ import numpy as np
 import ccxt
 import talib
 from scipy.signal import argrelextrema
-from scipy.stats import linregress
 from sklearn.cluster import DBSCAN, KMeans
-from sklearn.preprocessing import StandardScaler
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
 import hashlib
-import os
-import json
-from collections import defaultdict
 import sqlite3
 import warnings
 warnings.filterwarnings('ignore')
@@ -23,35 +18,29 @@ warnings.filterwarnings('ignore')
 # 🔧 Settings
 # ============================================
 
-CACHE_DURATION_DATA = 300
-CACHE_DURATION_ANALYSIS = 600
-RATE_LIMIT_SECONDS = 3
+CACHE_DURATION_DATA = 60
+CACHE_DURATION_ANALYSIS = 300
+RATE_LIMIT_SECONDS = 2
 MAX_CANDLES = 500
 
 ADMIN_USERNAME = "adminSO"
 ADMIN_PASSWORD = "admin25SO"
-SUBSCRIPTION_PRICE = "99$"
 
 # ============================================
-# 🏦 KuCoin Exchange
+# 🏦 OKX Exchange
 # ============================================
 
 @st.cache_resource
 def get_exchange():
-    """KuCoin for crypto - works everywhere"""
     try:
-        exchange = ccxt.kucoin({
+        exchange = ccxt.okx({
             'rateLimit': 3000,
             'enableRateLimit': True,
-            'options': {
-                'defaultType': 'spot',
-                'adjustForTimeDifference': True,
-            }
         })
         exchange.fetch_ohlcv('BTC/USDT', '1h', limit=1)
         return exchange
     except Exception as e:
-        st.error(f"❌ KuCoin error: {str(e)}")
+        st.error(f"❌ OKX error: {str(e)}")
         return None
 
 # ============================================
