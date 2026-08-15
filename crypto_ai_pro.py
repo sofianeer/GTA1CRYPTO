@@ -15,6 +15,7 @@ import hashlib
 import os
 import json
 from collections import defaultdict
+import sqlite3
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -92,137 +93,405 @@ def check_rate_limit():
     return True
 
 # ============================================
-# 🗄️ نظام إدارة المستخدمين
+# 🗄️ نظام إدارة المستخدمين باستخدام SQLite
 # ============================================
 
 class UserManager:
-    def __init__(self, users_file="users.json"):
-        self.users_file = users_file
-        self.users = self._load_users()
+    def __init__(self, db_file="users.db"):
+        self.db_file = db_file
+        self._init_db()
+        self._ensure_admin()
         
-        # ✅ إنشاء حساب adminSO مفعل تلقائياً إذا لم يكن موجوداً
-        if "adminSO" not in self.users:
-            self.users["adminSO"] = {
-                "password": self._hash_password("admin25SO"),
-                "email": "",
-                "active": True,  # ✅ مفعل تلقائياً
-                "created_at": datetime.now().isoformat(),
-                "last_login": None,
-                "is_admin": True,  # ✅ مسؤول
-                "payment_status": "paid",
-                "payment_date": datetime.now().isoformat(),
-                "expiry_date": (datetime.now() + timedelta(days=365)).isoformat()
-            }
-            self._save_users()
-            print("✅ تم إنشاء حساب المسؤول adminSO تلقائياً!")
-        
-    def _load_users(self):
-        if os.path.exists(self.users_file):
-            try:
-                with open(self.users_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except:
-                return {}
-        return {}
+    def _init_db(self):
+        """تهيئة قاعدة البيانات"""
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            
+            # إنشاء جدول المستخدمين
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    username TEXT PRIMARY KEY,
+                    password TEXT NOT NULL,
+                    email TEXT,
+                    active INTEGER DEFAULT 0,
+                    created_at TEXT,
+                    last_login TEXT,
+                    is_admin INTEGER DEFAULT 0,
+                    payment_status TEXT DEFAULT 'pending',
+                    payment_date TEXT,
+                    expiry_date TEXT
+                )
+            ''')
+            
+            conn.commit()
+            conn.close()
+            print("✅ تم تهيئة قاعدة البيانات بنجاح!")
+            
+        except Exception as e:
+            print(f"❌ خطأ في تهيئة قاعدة البيانات: {e}")
     
-    def _save_users(self):
-        with open(self.users_file, 'w', encoding='utf-8') as f:
-            json.dump(self.users, f, indent=4, ensure_ascii=False)
+    def _ensure_admin(self):
+        """التأكد من وجود حساب المسؤول"""
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            
+            # التحقق من وجود المسؤول
+            cursor.execute("SELECT * FROM users WHERE username=?", (ADMIN_USERNAME,))
+            if not cursor.fetchone():
+                # إنشاء حساب المسؤول
+                cursor.execute('''
+                    INSERT INTO users 
+                    (username, password, email, active, created_at, is_admin, payment_status, payment_date, expiry_date)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    ADMIN_USERNAME,
+                    self._hash_password(ADMIN_PASSWORD),
+                    "admin@example.com",
+                    1,  # active
+                    datetime.now().isoformat(),
+                    1,  # is_admin
+                    "paid",
+                    datetime.now().isoformat(),
+                    (datetime.now() + timedelta(days=365)).isoformat()
+                ))
+                conn.commit()
+                print("✅ تم إنشاء حساب المسؤول adminSO!")
+            else:
+                print("✅ حساب المسؤول موجود بالفعل!")
+            
+            conn.close()
+            
+        except Exception as e:
+            print(f"❌ خطأ في التحقق من المسؤول: {e}")
     
     def _hash_password(self, password):
         return hashlib.sha256(password.encode()).hexdigest()
     
     def register_user(self, username, password, email=""):
-        if username in self.users:
-            return False, "❌ اسم المستخدم موجود بالفعل!"
         if len(username) < 3:
             return False, "❌ اسم المستخدم يجب أن يكون 3 أحرف على الأقل!"
         if len(password) < 4:
             return False, "❌ كلمة المرور يجب أن تكون 4 أحرف على الأقل!"
         
-        self.users[username] = {
-            "password": self._hash_password(password),
-            "email": email,
-            "active": False,
-            "created_at": datetime.now().isoformat(),
-            "last_login": None,
-            "is_admin": False,
-            "payment_status": "pending",
-            "payment_date": None,
-            "expiry_date": None
-        }
-        
-        self._save_users()
-        return True, "✅ تم التسجيل بنجاح! انتظر تفعيل حسابك من قبل المسؤول."
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            
+            # التحقق من وجود المستخدم
+            cursor.execute("SELECT * FROM users WHERE username=?", (username,))
+            if cursor.fetchone():
+                conn.close()
+                return False, "❌ اسم المستخدم موجود بالفعل!"
+            
+            # إضافة المستخدم الجديد
+            cursor.execute('''
+                INSERT INTO users 
+                (username, password, email, active, created_at, is_admin, payment_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                username,
+                self._hash_password(password),
+                email,
+                0,  # غير مفعل
+                datetime.now().isoformat(),
+                0,  # ليس مسؤول
+                "pending"
+            ))
+            
+            conn.commit()
+            conn.close()
+            return True, "✅ تم التسجيل بنجاح! انتظر تفعيل حسابك من قبل المسؤول."
+            
+        except Exception as e:
+            return False, f"❌ خطأ في التسجيل: {str(e)}"
     
     def login_user(self, username, password):
-        if username not in self.users:
-            return False, "❌ اسم المستخدم غير موجود!"
-        user = self.users[username]
-        if not user.get("active", False):
-            return False, "⛔ حسابك غير مفعل! يرجى الدفع عبر تلغرام لتفعيل الحساب."
-        if user["password"] != self._hash_password(password):
-            return False, "❌ كلمة مرور خاطئة!"
-        user["last_login"] = datetime.now().isoformat()
-        self._save_users()
-        return True, "✅ تم تسجيل الدخول بنجاح!"
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT * FROM users WHERE username=?", (username,))
+            user = cursor.fetchone()
+            
+            if not user:
+                conn.close()
+                return False, "❌ اسم المستخدم غير موجود!"
+            
+            # user = (username, password, email, active, created_at, last_login, is_admin, payment_status, payment_date, expiry_date)
+            if user[3] == 0:  # غير مفعل
+                conn.close()
+                return False, "⛔ حسابك غير مفعل! يرجى الدفع عبر تلغرام لتفعيل الحساب."
+            
+            if user[1] != self._hash_password(password):
+                conn.close()
+                return False, "❌ كلمة مرور خاطئة!"
+            
+            # تحديث تاريخ آخر دخول
+            cursor.execute("UPDATE users SET last_login=? WHERE username=?", 
+                         (datetime.now().isoformat(), username))
+            conn.commit()
+            conn.close()
+            
+            return True, "✅ تم تسجيل الدخول بنجاح!"
+            
+        except Exception as e:
+            return False, f"❌ خطأ في تسجيل الدخول: {str(e)}"
     
     def activate_user(self, username):
-        if username not in self.users:
-            return False, "❌ المستخدم غير موجود!"
-        if self.users[username].get("is_admin", False):
+        if username == ADMIN_USERNAME:
             return False, "❌ المسؤول مفعل تلقائياً!"
-        self.users[username]["active"] = True
-        self.users[username]["payment_status"] = "paid"
-        self.users[username]["payment_date"] = datetime.now().isoformat()
-        expiry = datetime.now() + timedelta(days=30)
-        self.users[username]["expiry_date"] = expiry.isoformat()
-        self._save_users()
-        return True, f"✅ تم تفعيل حساب {username} بنجاح!"
+        
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT * FROM users WHERE username=?", (username,))
+            if not cursor.fetchone():
+                conn.close()
+                return False, "❌ المستخدم غير موجود!"
+            
+            expiry = datetime.now() + timedelta(days=30)
+            cursor.execute('''
+                UPDATE users 
+                SET active=1, payment_status='paid', payment_date=?, expiry_date=?
+                WHERE username=?
+            ''', (datetime.now().isoformat(), expiry.isoformat(), username))
+            
+            conn.commit()
+            conn.close()
+            return True, f"✅ تم تفعيل حساب {username} بنجاح!"
+            
+        except Exception as e:
+            return False, f"❌ خطأ: {str(e)}"
     
     def deactivate_user(self, username):
-        if username not in self.users:
-            return False, "❌ المستخدم غير موجود!"
-        if self.users[username].get("is_admin", False):
+        if username == ADMIN_USERNAME:
             return False, "❌ لا يمكن تعطيل المسؤول!"
-        self.users[username]["active"] = False
-        self.users[username]["payment_status"] = "expired"
-        self._save_users()
-        return True, f"✅ تم تعطيل حساب {username}!"
+        
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                UPDATE users 
+                SET active=0, payment_status='expired'
+                WHERE username=?
+            ''', (username,))
+            
+            conn.commit()
+            conn.close()
+            return True, f"✅ تم تعطيل حساب {username}!"
+            
+        except Exception as e:
+            return False, f"❌ خطأ: {str(e)}"
     
     def delete_user(self, username):
-        if username not in self.users:
-            return False, "❌ المستخدم غير موجود!"
-        if self.users[username].get("is_admin", False):
-            admin_count = sum(1 for u in self.users.values() if u.get("is_admin", False))
+        if username == ADMIN_USERNAME:
+            # التأكد من وجود مسؤول آخر
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin=1")
+            admin_count = cursor.fetchone()[0]
+            conn.close()
+            
             if admin_count <= 1:
                 return False, "❌ لا يمكن حذف المسؤول الوحيد!"
-        del self.users[username]
-        self._save_users()
-        return True, "✅ تم حذف المستخدم بنجاح!"
+        
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM users WHERE username=?", (username,))
+            conn.commit()
+            conn.close()
+            return True, "✅ تم حذف المستخدم بنجاح!"
+            
+        except Exception as e:
+            return False, f"❌ خطأ: {str(e)}"
+    
+    def make_admin(self, username):
+        if username == ADMIN_USERNAME:
+            return False, "❌ هذا حساب المسؤول الرئيسي!"
+        
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET is_admin=1 WHERE username=?", (username,))
+            conn.commit()
+            conn.close()
+            return True, f"✅ تم ترقية {username} إلى مسؤول!"
+        except Exception as e:
+            return False, f"❌ خطأ: {str(e)}"
+    
+    def remove_admin(self, username):
+        if username == ADMIN_USERNAME:
+            return False, "❌ لا يمكن إلغاء صلاحية المسؤول الرئيسي!"
+        
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET is_admin=0 WHERE username=?", (username,))
+            conn.commit()
+            conn.close()
+            return True, f"✅ تم إلغاء صلاحية المسؤول عن {username}"
+        except Exception as e:
+            return False, f"❌ خطأ: {str(e)}"
+    
+    def extend_subscription(self, username, days=30):
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT expiry_date FROM users WHERE username=?", (username,))
+            result = cursor.fetchone()
+            
+            if result and result[0]:
+                current_expiry = datetime.fromisoformat(result[0])
+                new_expiry = current_expiry + timedelta(days=days)
+            else:
+                new_expiry = datetime.now() + timedelta(days=days)
+            
+            cursor.execute('''
+                UPDATE users 
+                SET expiry_date=?, payment_status='paid', active=1
+                WHERE username=?
+            ''', (new_expiry.isoformat(), username))
+            
+            conn.commit()
+            conn.close()
+            return True, f"✅ تم تمديد اشتراك {username} لـ {days} يوماً"
+        except Exception as e:
+            return False, f"❌ خطأ: {str(e)}"
     
     def get_pending_users(self):
-        pending = {}
-        for username, data in self.users.items():
-            if not data.get("is_admin", False) and not data.get("active", False):
-                pending[username] = data
-        return pending
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT username, email, created_at 
+                FROM users 
+                WHERE active=0 AND is_admin=0
+            ''')
+            users = cursor.fetchall()
+            conn.close()
+            
+            result = {}
+            for user in users:
+                result[user[0]] = {
+                    "email": user[1],
+                    "created_at": user[2]
+                }
+            return result
+            
+        except Exception as e:
+            return {}
     
     def get_active_users(self):
-        active = {}
-        for username, data in self.users.items():
-            if data.get("active", False) and not data.get("is_admin", False):
-                active[username] = data
-        return active
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT username, email, expiry_date 
+                FROM users 
+                WHERE active=1 AND is_admin=0
+            ''')
+            users = cursor.fetchall()
+            conn.close()
+            
+            result = {}
+            for user in users:
+                result[user[0]] = {
+                    "email": user[1],
+                    "expiry_date": user[2]
+                }
+            return result
+            
+        except Exception as e:
+            return {}
     
     def get_all_users(self):
-        return self.users
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT username, email, active, created_at, last_login, is_admin, payment_status, payment_date, expiry_date
+                FROM users
+            ''')
+            users = cursor.fetchall()
+            conn.close()
+            
+            result = {}
+            for user in users:
+                result[user[0]] = {
+                    "email": user[1],
+                    "active": bool(user[2]),
+                    "created_at": user[3],
+                    "last_login": user[4],
+                    "is_admin": bool(user[5]),
+                    "payment_status": user[6],
+                    "payment_date": user[7],
+                    "expiry_date": user[8]
+                }
+            return result
+            
+        except Exception as e:
+            return {}
     
     def is_admin(self, username):
-        if username not in self.users:
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute("SELECT is_admin FROM users WHERE username=?", (username,))
+            result = cursor.fetchone()
+            conn.close()
+            return result and result[0] == 1
+        except:
             return False
-        return self.users[username].get("is_admin", False)
-
+    
+    def get_user_data(self, username):
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT username, email, active, created_at, last_login, is_admin, payment_status, payment_date, expiry_date
+                FROM users WHERE username=?
+            ''', (username,))
+            user = cursor.fetchone()
+            conn.close()
+            
+            if user:
+                return {
+                    "username": user[0],
+                    "email": user[1],
+                    "active": bool(user[2]),
+                    "created_at": user[3],
+                    "last_login": user[4],
+                    "is_admin": bool(user[5]),
+                    "payment_status": user[6],
+                    "payment_date": user[7],
+                    "expiry_date": user[8]
+                }
+            return None
+            
+        except Exception as e:
+            return None
+    
+    def get_users_count(self):
+        try:
+            conn = sqlite3.connect(self.db_file)
+            cursor = conn.cursor()
+            
+            total = cursor.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            active = cursor.execute("SELECT COUNT(*) FROM users WHERE active=1").fetchone()[0]
+            pending = cursor.execute("SELECT COUNT(*) FROM users WHERE active=0 AND is_admin=0").fetchone()[0]
+            admin = cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin=1").fetchone()[0]
+            
+            conn.close()
+            return total, active, pending, admin
+            
+        except Exception as e:
+            return 0, 0, 0, 0
 
 # ============================================
 # 🎯 كاشف مناطق التصفية الصفراء
@@ -343,9 +612,8 @@ class LiquidationZonesDetector:
         
         return clustered_zones
 
-
 # ============================================
-# 📊 فئة التحليل التقني - جميع الأطر الزمنية مع الخطوط
+# 📊 فئة التحليل التقني
 # ============================================
 
 class CryptoAnalyzer:
@@ -3152,7 +3420,6 @@ class CryptoAnalyzer:
             decreasing_line_color='#ff0066'
         ), row=1, col=1)
         
-        # ✅ الخطوط الزرقاء - 4 ساعات
         if symbol in self.blue_liquidity_lines_4h:
             for line in self.blue_liquidity_lines_4h[symbol]:
                 fig.add_shape(
@@ -3185,7 +3452,6 @@ class CryptoAnalyzer:
                     row=1, col=1
                 )
         
-        # ✅ الخطوط البيضاء - 4 ساعات
         if symbol in self.white_liquidity_levels_4h:
             for level in self.white_liquidity_levels_4h[symbol]:
                 fig.add_shape(
@@ -3218,7 +3484,6 @@ class CryptoAnalyzer:
                     row=1, col=1
                 )
         
-        # ✅ المناطق الصفراء - 4 ساعات
         if symbol in self.yellow_liquidation_zones_4h:
             for zone in self.yellow_liquidation_zones_4h[symbol]:
                 fig.add_shape(
@@ -3251,7 +3516,6 @@ class CryptoAnalyzer:
                     row=1, col=1
                 )
         
-        # ✅ المناطق البرتقالية - 4 ساعات
         if symbol in self.orange_magnetic_zones_4h:
             for zone in self.orange_magnetic_zones_4h[symbol]:
                 fig.add_shape(
@@ -3344,79 +3608,9 @@ class CryptoAnalyzer:
         
         return fig
 
-
 # ============================================
-# 🔐 نظام تسجيل الدخول وإدارة المستخدمين
+# 🔐 صفحات تسجيل الدخول والإدارة
 # ============================================
-
-def payment_page():
-    st.markdown("""
-    <div style="text-align: center; padding: 30px; background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-                border-radius: 15px; margin-bottom: 30px;">
-        <h1 style="color: white;">💎 تفعيل الحساب</h1>
-        <p style="color: #e0f0ff;">للوصول إلى جميع ميزات المنصة، يرجى تفعيل حسابك</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    col1, col2 = st.columns([1, 2])
-    
-    with col1:
-        st.markdown("""
-        <div style="background: rgba(30, 60, 114, 0.3); padding: 20px; border-radius: 10px;
-                    border: 2px solid #00ff88;">
-            <h3 style="color: #00ff88;">📋 مميزات الاشتراك</h3>
-            <ul style="color: #e0f0ff;">
-                <li>📊 شموع 5 أطر زمنية</li>
-                <li>🔵 خطوط سيولة زرقاء</li>
-                <li>⚪ مستويات قوية بيضاء</li>
-                <li>🟡 مناطق تصفية صفراء</li>
-                <li>🟠 مناطق جذب برتقالية</li>
-                <li>📈 تحديثات لحظية</li>
-            </ul>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown("""
-        <div style="background: rgba(30, 60, 114, 0.3); padding: 20px; border-radius: 10px;">
-            <h3 style="color: #ffaa00;">💰 طريقة الدفع</h3>
-            <p style="color: #e0f0ff;">
-                1️⃣ تواصل معي على تلغرام:<br>
-                <a href="https://t.me/SOFIAN232" target="_blank" 
-                   style="color: #00ff88; font-size: 1.2em;">
-                    @SOFIAN232
-                </a>
-            </p>
-            <p style="color: #e0f0ff;">
-                2️⃣ أرسل مبلغ الاشتراك:<br>
-                <span style="color: #ffaa00; font-size: 1.5em;">💵 99$</span>
-                <span style="color: #888;">(شهرياً)</span>
-            </p>
-            <p style="color: #e0f0ff;">
-                3️⃣ أرسل لي اسم المستخدم الخاص بك:<br>
-                <span style="color: #00ff88;">📝 username: {your_username}</span>
-            </p>
-            <div style="background: rgba(255, 165, 0, 0.1); padding: 15px; border-radius: 10px;
-                        border: 1px solid #ffaa00; margin-top: 15px;">
-                <p style="color: #ffaa00; text-align: center;">
-                    ⏳ بعد الدفع، سيتم تفعيل حسابك خلال 24 ساعة
-                </p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        if st.session_state.get('username'):
-            username = st.session_state['username']
-            user_manager = UserManager()
-            user_data = user_manager.users.get(username, {})
-            
-            if user_data.get('payment_status') == 'pending':
-                st.warning("⏳ حسابك في انتظار التفعيل من قبل المسؤول")
-            elif user_data.get('payment_status') == 'paid':
-                st.success("✅ حسابك مفعل! يمكنك استخدام جميع الميزات")
-                if user_data.get('expiry_date'):
-                    st.info(f"📅 تنتهي الصلاحية: {user_data['expiry_date'][:10]}")
-
 
 def login_page(user_manager):
     st.markdown("""
@@ -3442,12 +3636,7 @@ def login_page(user_manager):
                     username = st.text_input("👤 اسم المستخدم", placeholder="أدخل اسم المستخدم")
                     password = st.text_input("🔒 كلمة المرور", type="password", placeholder="أدخل كلمة المرور")
                     
-                    col_btn1, col_btn2 = st.columns([1, 1])
-                    with col_btn1:
-                        submit_login = st.form_submit_button("🚀 تسجيل الدخول", use_container_width=True)
-                    
-                    with col_btn2:
-                        st.write("")
+                    submit_login = st.form_submit_button("🚀 تسجيل الدخول", use_container_width=True)
                     
                     if submit_login:
                         if username and password:
@@ -3511,12 +3700,7 @@ def admin_panel(user_manager):
     </div>
     """, unsafe_allow_html=True)
     
-    users = user_manager.get_all_users()
-    
-    total = len(users)
-    active = sum(1 for u in users.values() if u.get('active', False))
-    pending = sum(1 for u in users.values() if not u.get('active', False) and not u.get('is_admin', False))
-    admin_count = sum(1 for u in users.values() if u.get('is_admin', False))
+    total, active, pending, admin_count = user_manager.get_users_count()
     
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -3539,7 +3723,7 @@ def admin_panel(user_manager):
             with col1:
                 st.write(f"**👤 {username}**")
                 st.caption(f"📧 {data.get('email', 'لا يوجد')}")
-                st.caption(f"📅 سجل: {data.get('created_at', '')[:16]}")
+                st.caption(f"📅 سجل: {data.get('created_at', '')[:16] if data.get('created_at') else ''}")
             with col2:
                 st.write("💰 **في انتظار الدفع**")
                 st.caption("⏳ ينتظر التفعيل")
@@ -3561,7 +3745,7 @@ def admin_panel(user_manager):
     
     if active_users:
         for username, data in active_users.items():
-            col1, col2, col3 = st.columns([2, 2, 1])
+            col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
             with col1:
                 st.write(f"**👤 {username}**")
                 st.caption(f"📧 {data.get('email', 'لا يوجد')}")
@@ -3577,11 +3761,20 @@ def admin_panel(user_manager):
                         st.rerun()
                     else:
                         st.error(message)
+            with col4:
+                if st.button(f"📅 تمديد {username}", key=f"extend_{username}"):
+                    success, message = user_manager.extend_subscription(username, 30)
+                    if success:
+                        st.success(message)
+                        st.rerun()
+                    else:
+                        st.error(message)
     
     # 📋 جميع المستخدمين
     with st.expander("📋 عرض جميع المستخدمين"):
+        all_users = user_manager.get_all_users()
         users_data = []
-        for username, data in users.items():
+        for username, data in all_users.items():
             status = "🟢 نشط" if data.get('active', False) else "🟡 في انتظار التفعيل"
             if data.get('is_admin', False):
                 status = "👑 مسؤول"
@@ -3599,9 +3792,74 @@ def admin_panel(user_manager):
             st.dataframe(df_users, use_container_width=True)
 
 
-# ============================================
-# 🎯 واجهة التحليل الرئيسية
-# ============================================
+def payment_page(user_manager):
+    st.markdown("""
+    <div style="text-align: center; padding: 30px; background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+                border-radius: 15px; margin-bottom: 30px;">
+        <h1 style="color: white;">💎 تفعيل الحساب</h1>
+        <p style="color: #e0f0ff;">للوصول إلى جميع ميزات المنصة، يرجى تفعيل حسابك</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        st.markdown("""
+        <div style="background: rgba(30, 60, 114, 0.3); padding: 20px; border-radius: 10px;
+                    border: 2px solid #00ff88;">
+            <h3 style="color: #00ff88;">📋 مميزات الاشتراك</h3>
+            <ul style="color: #e0f0ff;">
+                <li>📊 شموع 5 أطر زمنية</li>
+                <li>🔵 خطوط سيولة زرقاء</li>
+                <li>⚪ مستويات قوية بيضاء</li>
+                <li>🟡 مناطق تصفية صفراء</li>
+                <li>🟠 مناطق جذب برتقالية</li>
+                <li>📈 تحديثات لحظية</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("""
+        <div style="background: rgba(30, 60, 114, 0.3); padding: 20px; border-radius: 10px;">
+            <h3 style="color: #ffaa00;">💰 طريقة الدفع</h3>
+            <p style="color: #e0f0ff;">
+                1️⃣ تواصل معي على تلغرام:<br>
+                <a href="https://t.me/SOFIAN232" target="_blank" 
+                   style="color: #00ff88; font-size: 1.2em;">
+                    @SOFIAN232
+                </a>
+            </p>
+            <p style="color: #e0f0ff;">
+                2️⃣ أرسل مبلغ الاشتراك:<br>
+                <span style="color: #ffaa00; font-size: 1.5em;">💵 99$</span>
+                <span style="color: #888;">(شهرياً)</span>
+            </p>
+            <p style="color: #e0f0ff;">
+                3️⃣ أرسل لي اسم المستخدم الخاص بك:<br>
+                <span style="color: #00ff88;">📝 username: {your_username}</span>
+            </p>
+            <div style="background: rgba(255, 165, 0, 0.1); padding: 15px; border-radius: 10px;
+                        border: 1px solid #ffaa00; margin-top: 15px;">
+                <p style="color: #ffaa00; text-align: center;">
+                    ⏳ بعد الدفع، سيتم تفعيل حسابك خلال 24 ساعة
+                </p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if st.session_state.get('username'):
+            username = st.session_state['username']
+            user_data = user_manager.get_user_data(username)
+            
+            if user_data:
+                if user_data.get('payment_status') == 'pending':
+                    st.warning("⏳ حسابك في انتظار التفعيل من قبل المسؤول")
+                elif user_data.get('payment_status') == 'paid':
+                    st.success("✅ حسابك مفعل! يمكنك استخدام جميع الميزات")
+                    if user_data.get('expiry_date'):
+                        st.info(f"📅 تنتهي الصلاحية: {user_data['expiry_date'][:10]}")
+
 
 def analysis_interface():
     st.markdown("""
@@ -3670,6 +3928,7 @@ def analysis_interface():
 # ============================================
 
 def main():
+    # تهيئة session state
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
     if 'username' not in st.session_state:
@@ -3679,8 +3938,10 @@ def main():
     if 'run_analysis' not in st.session_state:
         st.session_state['run_analysis'] = False
     
+    # إنشاء مدير المستخدمين
     user_manager = UserManager()
     
+    # إذا لم يكن مسجل الدخول
     if not st.session_state['logged_in']:
         login_page(user_manager)
         return
@@ -3688,12 +3949,14 @@ def main():
     username = st.session_state['username']
     is_admin = st.session_state['is_admin']
     
+    # التحقق من صلاحية المستخدم
     if not is_admin:
-        user_data = user_manager.users.get(username, {})
-        if not user_data.get('active', False):
-            payment_page()
+        user_data = user_manager.get_user_data(username)
+        if not user_data or not user_data.get('active', False):
+            payment_page(user_manager)
             return
     
+    # الشريط الجانبي
     with st.sidebar:
         st.markdown("""
         <div style="text-align: center; padding: 10px;">
@@ -3718,6 +3981,7 @@ def main():
         st.markdown("<hr>", unsafe_allow_html=True)
         st.markdown("### 📊 القائمة")
     
+    # عرض المحتوى
     if is_admin:
         tab_admin, tab_analysis = st.tabs(["🛡️ لوحة تحكم المسؤول", "📊 التحليل"])
         with tab_admin:
