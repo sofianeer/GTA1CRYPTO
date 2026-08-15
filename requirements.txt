@@ -3,6 +3,6 @@ pandas
 numpy
 ccxt
 plotly
-talib-binary
+TA-Lib
 scikit-learn
 scipy
