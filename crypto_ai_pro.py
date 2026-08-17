@@ -18,6 +18,13 @@ warnings.filterwarnings('ignore')
 # 🔧 Settings
 # ============================================
 
+st.set_page_config(
+    page_title="GTA1CRYPTO - Advanced Analyzer",
+    page_icon="🚀",
+    layout="wide",
+    initial_sidebar_state="auto"
+)
+
 MAX_CANDLES = 500
 RATE_LIMIT_DELAY = 0.1
 
@@ -30,7 +37,6 @@ ADMIN_PASSWORD = "admin25SO"
 
 @st.cache_resource
 def get_exchange_spot():
-    """Bitget Spot"""
     try:
         exchange = ccxt.bitget({
             'rateLimit': 3000,
@@ -43,12 +49,11 @@ def get_exchange_spot():
         exchange.fetch_ohlcv('BTC/USDT', '1h', limit=1)
         return exchange
     except Exception as e:
-        st.error(f"❌ Bitget Spot connection error: {str(e)}")
+        st.error(f"❌ Connection error: {str(e)}")
         return None
 
 @st.cache_resource
 def get_exchange_future():
-    """Bitget Futures (Perpetual)"""
     try:
         exchange = ccxt.bitget({
             'rateLimit': 3000,
@@ -61,7 +66,7 @@ def get_exchange_future():
         exchange.fetch_ohlcv('BTC/USDT:USDT', '1h', limit=1)
         return exchange
     except Exception as e:
-        st.error(f"❌ Bitget Futures connection error: {str(e)}")
+        st.error(f"❌ Futures connection error: {str(e)}")
         return None
 
 # ============================================
@@ -88,7 +93,7 @@ def fetch_with_retry(exchange, symbol, timeframe, limit, max_retries=3):
             else:
                 time.sleep(RATE_LIMIT_DELAY * 2)
         except ccxt.BadSymbol as e:
-            st.error(f"❌ Symbol {symbol} not found on Bitget")
+            st.error(f"❌ Symbol {symbol} not found")
             return None
         except Exception as e:
             if attempt == max_retries - 1:
@@ -129,7 +134,7 @@ def fetch_candles_cached(symbol, timeframe='1h', limit=500):
         exchange = get_exchange_spot()
     
     if not exchange:
-        st.error(f"❌ Cannot connect to Bitget")
+        st.error(f"❌ Cannot connect")
         return None
     
     try:
@@ -145,7 +150,7 @@ def fetch_candles_cached(symbol, timeframe='1h', limit=500):
         return df
         
     except ccxt.BadSymbol as e:
-        st.error(f"❌ Symbol {clean_symbol} not found on Bitget")
+        st.error(f"❌ Symbol {clean_symbol} not found")
         return None
     except Exception as e:
         st.error(f"❌ Failed to fetch {clean_symbol}: {str(e)}")
@@ -550,7 +555,7 @@ class UserManager:
             return 0, 0, 0, 0
 
 # ============================================
-# 📊 Main Analyzer - Bitget Version
+# 📊 Main Analyzer
 # ============================================
 
 class CryptoAnalyzer:
@@ -2538,12 +2543,12 @@ class CryptoAnalyzer:
         
         fig.update_layout(
             title=f"📊 {symbol} - 1h",
-            height=800,
+            height=700,
             showlegend=False,
             hovermode="x unified",
             plot_bgcolor='rgba(10, 10, 30, 0.5)',
             paper_bgcolor='rgba(10, 10, 30, 0.5)',
-            margin=dict(l=20, r=20, t=60, b=20),
+            margin=dict(l=10, r=10, t=40, b=10),
             font=dict(color='#e0f0ff', size=10)
         )
         
@@ -2673,12 +2678,12 @@ class CryptoAnalyzer:
         
         fig.update_layout(
             title=f"📊 {symbol} - 15m",
-            height=800,
+            height=700,
             showlegend=False,
             hovermode="x unified",
             plot_bgcolor='rgba(10, 10, 30, 0.5)',
             paper_bgcolor='rgba(10, 10, 30, 0.5)',
-            margin=dict(l=20, r=20, t=60, b=20),
+            margin=dict(l=10, r=10, t=40, b=10),
             font=dict(color='#e0f0ff', size=10)
         )
         return fig
@@ -2806,12 +2811,12 @@ class CryptoAnalyzer:
         
         fig.update_layout(
             title=f"📊 {symbol} - 5m",
-            height=800,
+            height=700,
             showlegend=False,
             hovermode="x unified",
             plot_bgcolor='rgba(10, 10, 30, 0.5)',
             paper_bgcolor='rgba(10, 10, 30, 0.5)',
-            margin=dict(l=20, r=20, t=60, b=20),
+            margin=dict(l=10, r=10, t=40, b=10),
             font=dict(color='#e0f0ff', size=10)
         )
         return fig
@@ -2939,12 +2944,12 @@ class CryptoAnalyzer:
         
         fig.update_layout(
             title=f"📊 {symbol} - 1m",
-            height=800,
+            height=700,
             showlegend=False,
             hovermode="x unified",
             plot_bgcolor='rgba(10, 10, 30, 0.5)',
             paper_bgcolor='rgba(10, 10, 30, 0.5)',
-            margin=dict(l=20, r=20, t=60, b=20),
+            margin=dict(l=10, r=10, t=40, b=10),
             font=dict(color='#e0f0ff', size=8)
         )
         return fig
@@ -3072,12 +3077,12 @@ class CryptoAnalyzer:
         
         fig.update_layout(
             title=f"📊 {symbol} - 4h",
-            height=800,
+            height=700,
             showlegend=False,
             hovermode="x unified",
             plot_bgcolor='rgba(10, 10, 30, 0.5)',
             paper_bgcolor='rgba(10, 10, 30, 0.5)',
-            margin=dict(l=20, r=20, t=60, b=20),
+            margin=dict(l=10, r=10, t=40, b=10),
             font=dict(color='#e0f0ff', size=10)
         )
         return fig
@@ -3088,9 +3093,9 @@ class CryptoAnalyzer:
 
 def login_page(user_manager):
     st.markdown("""
-    <div style="text-align: center; padding: 30px;">
-        <h1 style="font-size: 3em;">🔐 Login</h1>
-        <p style="font-size: 1.2em; color: #888;">Advanced Liquidity Analysis Platform</p>
+    <div style="text-align: center; padding: 30px; background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%); border-radius: 15px;">
+        <h1 style="color: #00ff88; font-size: 3em; margin-bottom: 5px;">🚀 GTA1CRYPTO</h1>
+        <p style="color: #e0f0ff; font-size: 1.2em;">Advanced Liquidity Analysis Platform</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -3137,9 +3142,9 @@ def login_page(user_manager):
 
 def admin_panel(user_manager):
     st.markdown("""
-    <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+    <div style="background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
                 padding: 20px; border-radius: 10px; margin-bottom: 20px;">
-        <h2 style="color: white; text-align: center;">🛡️ Admin Panel</h2>
+        <h2 style="color: #00ff88; text-align: center;">🛡️ Admin Panel</h2>
     </div>
     """, unsafe_allow_html=True)
     
@@ -3243,9 +3248,9 @@ def admin_panel(user_manager):
                         expiry_date = datetime.fromisoformat(expiry)
                         days_left = (expiry_date - datetime.now()).days
                         if days_left > 0:
-                            st.write(f"{expiry[:10]} ({days_left}d)")
+                            st.write(f"✅ {days_left} days left")
                         else:
-                            st.write(f"⚠️ {expiry[:10]} (Expired)")
+                            st.write(f"⚠️ Expired")
                     except:
                         st.write(expiry[:10])
                 else:
@@ -3331,9 +3336,9 @@ def admin_panel(user_manager):
 
 def payment_page(user_manager):
     st.markdown("""
-    <div style="text-align: center; padding: 30px; background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+    <div style="text-align: center; padding: 30px; background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
                 border-radius: 15px; margin-bottom: 30px;">
-        <h1 style="color: white;">💎 Activate Account</h1>
+        <h1 style="color: #00ff88;">💎 Activate Account</h1>
     </div>
     """, unsafe_allow_html=True)
     
@@ -3354,11 +3359,10 @@ def payment_page(user_manager):
 
 def analysis_interface():
     st.markdown("""
-    <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%); 
-                border-radius: 15px; margin-bottom: 30px;">
-        <h1 style="color: #00ff88; font-size: 2.5em; margin-bottom: 5px;">🚀 GTA1CRYPTO</h1>
-        <p style="color: #e0f0ff; font-size: 1.1em;">Advanced Liquidity & Liquidation Analysis</p>
-        <p style="color: #8899bb; font-size: 0.9em;">Bitget | Candles + Liquidity + Liquidation + Magnetic Zones</p>
+    <div style="text-align: center; padding: 15px; background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%); 
+                border-radius: 15px; margin-bottom: 20px;">
+        <h1 style="color: #00ff88; font-size: 2.2em; margin-bottom: 5px;">🚀 GTA1CRYPTO</h1>
+        <p style="color: #e0f0ff; font-size: 1em;">Advanced Liquidity & Liquidation Analysis</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -3424,6 +3428,7 @@ def analysis_interface():
 # ============================================
 
 def main():
+    # تهيئة حالة الجلسة
     if 'logged_in' not in st.session_state:
         st.session_state['logged_in'] = False
     if 'username' not in st.session_state:
@@ -3435,6 +3440,7 @@ def main():
     
     user_manager = UserManager()
     
+    # التحقق من حالة تسجيل الدخول
     if not st.session_state['logged_in']:
         login_page(user_manager)
         return
@@ -3442,16 +3448,32 @@ def main():
     username = st.session_state['username']
     is_admin = st.session_state['is_admin']
     
+    # التحقق من الاشتراك للمستخدمين العاديين
     if not is_admin:
         user_data = user_manager.get_user_data(username)
         if not user_data or not user_data.get('active', False):
             payment_page(user_manager)
             return
     
+    # الشريط الجانبي
     with st.sidebar:
-        st.markdown("### 🧠 GTA1CRYPTO")
+        st.markdown("### 🚀 GTA1CRYPTO")
         st.markdown(f"👤 **User:** {username}")
         st.markdown(f"🔑 **Role:** {'👑 Admin' if is_admin else '👤 User'}")
+        
+        # عرض عدد الأيام المتبقية للاشتراك
+        if not is_admin:
+            user_data = user_manager.get_user_data(username)
+            if user_data and user_data.get('expiry_date'):
+                try:
+                    expiry = datetime.fromisoformat(user_data['expiry_date'])
+                    days_left = (expiry - datetime.now()).days
+                    if days_left > 0:
+                        st.markdown(f"📅 **Days Left:** ✅ {days_left} days")
+                    else:
+                        st.markdown(f"📅 **Days Left:** ⚠️ Expired")
+                except:
+                    pass
         
         if is_admin:
             st.markdown("---")
