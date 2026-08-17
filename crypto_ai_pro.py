@@ -21,23 +21,20 @@ warnings.filterwarnings('ignore')
 CACHE_DURATION_DATA = 120  # 2 دقائق
 CACHE_DURATION_ANALYSIS = 300
 MAX_CANDLES = 500
-RATE_LIMIT_DELAY = 0.5
+RATE_LIMIT_DELAY = 0.1
 
 ADMIN_USERNAME = "adminSO"
 ADMIN_PASSWORD = "admin25SO"
 
-# قائمة الرموز التي هي فيوتشر فقط على Bybit
-FUTURE_ONLY_SYMBOLS = ['XAU/USDT', 'XAG/USDT', 'BTC/USDT:USDT', 'ETH/USDT:USDT']
-
 # ============================================
-# 🏦 Bybit Exchange (Spot + Futures)
+# 🏦 Bitget Exchange (Spot + Futures)
 # ============================================
 
 @st.cache_resource
 def get_exchange_spot():
-    """Bybit Spot"""
+    """Bitget Spot"""
     try:
-        exchange = ccxt.bybit({
+        exchange = ccxt.bitget({
             'rateLimit': 3000,
             'enableRateLimit': True,
             'options': {
@@ -45,17 +42,18 @@ def get_exchange_spot():
                 'adjustForTimeDifference': True
             }
         })
+        # اختبار الاتصال
         exchange.fetch_ohlcv('BTC/USDT', '1h', limit=1)
         return exchange
     except Exception as e:
-        st.error(f"❌ Bybit Spot connection error: {str(e)}")
+        st.error(f"❌ Bitget Spot connection error: {str(e)}")
         return None
 
 @st.cache_resource
 def get_exchange_future():
-    """Bybit Futures (Perpetual)"""
+    """Bitget Futures (Perpetual)"""
     try:
-        exchange = ccxt.bybit({
+        exchange = ccxt.bitget({
             'rateLimit': 3000,
             'enableRateLimit': True,
             'options': {
@@ -66,7 +64,7 @@ def get_exchange_future():
         exchange.fetch_ohlcv('BTC/USDT:USDT', '1h', limit=1)
         return exchange
     except Exception as e:
-        st.error(f"❌ Bybit Futures connection error: {str(e)}")
+        st.error(f"❌ Bitget Futures connection error: {str(e)}")
         return None
 
 # ============================================
@@ -94,7 +92,7 @@ def fetch_with_retry(exchange, symbol, timeframe, limit, max_retries=3):
             else:
                 time.sleep(RATE_LIMIT_DELAY * 2)
         except ccxt.BadSymbol as e:
-            st.error(f"❌ Symbol {symbol} not found on Bybit")
+            st.error(f"❌ Symbol {symbol} not found on Bitget")
             return None
         except Exception as e:
             if attempt == max_retries - 1:
@@ -113,12 +111,8 @@ def detect_market_type(symbol):
     if clean_symbol.endswith('-PERP') or clean_symbol.endswith('-SWAP'):
         return 'future'
     
-    # 2. المعادن الثمينة دائماً فيوتشر
+    # 2. Bitget: XAU/USDT فيوتشر فقط
     if clean_symbol.startswith('XAU') or clean_symbol.startswith('XAG'):
-        return 'future'
-    
-    # 3. قائمة الرموز فيوتشر فقط
-    if clean_symbol in ['BTC/USDT:USDT', 'ETH/USDT:USDT']:
         return 'future'
     
     return 'spot'
@@ -135,8 +129,11 @@ def convert_symbol_for_exchange(symbol, market_type):
 @st.cache_data(ttl=CACHE_DURATION_DATA)
 def fetch_candles_cached(symbol, timeframe='1h', limit=500):
     """
-    جلب البيانات من Bybit مع دعم XAU/USDT (فيوتشر فقط)
+    جلب البيانات من Bitget
+    - الحد الأقصى 1000 شمعة في الطلب الواحد
+    - يدعم السبوت والفيوتشر
     """
+    
     clean_symbol = symbol.upper().strip()
     
     # كشف نوع السوق
@@ -150,10 +147,11 @@ def fetch_candles_cached(symbol, timeframe='1h', limit=500):
         exchange = get_exchange_spot()
     
     if not exchange:
-        st.error(f"❌ Cannot connect to Bybit")
+        st.error(f"❌ Cannot connect to Bitget")
         return None
     
     try:
+        # Bitget يدعم 1000 شمعة في الطلب الواحد
         ohlcv = fetch_with_retry(exchange, clean_symbol, timeframe, min(limit, 1000))
         
         if not ohlcv:
@@ -166,7 +164,7 @@ def fetch_candles_cached(symbol, timeframe='1h', limit=500):
         return df
         
     except ccxt.BadSymbol as e:
-        st.error(f"❌ Symbol {clean_symbol} not found on Bybit. Try: XAU/USDT:USDT")
+        st.error(f"❌ Symbol {clean_symbol} not found on Bitget")
         return None
     except Exception as e:
         st.error(f"❌ Failed to fetch {clean_symbol}: {str(e)}")
@@ -174,7 +172,7 @@ def fetch_candles_cached(symbol, timeframe='1h', limit=500):
 
 @st.cache_data(ttl=CACHE_DURATION_DATA)
 def fetch_trades_cached(symbol, limit=500):
-    """جلب الصفقات الأخيرة من Bybit"""
+    """جلب الصفقات الأخيرة من Bitget"""
     try:
         clean_symbol = symbol.upper().strip()
         market_type = detect_market_type(clean_symbol)
@@ -188,7 +186,6 @@ def fetch_trades_cached(symbol, limit=500):
         if not exchange:
             return None
         
-        # استخدام fetch_with_retry مع timeframe=None
         trades = fetch_with_retry(exchange, clean_symbol, None, limit)
         
         if not trades:
@@ -207,7 +204,7 @@ def fetch_trades_cached(symbol, limit=500):
         
         return pd.DataFrame(trades_data)
     except Exception as e:
-        st.warning(f"⚠️ Trades fetch warning (不影响分析): {str(e)}")
+        st.warning(f"⚠️ Trades fetch warning: {str(e)}")
         return None
 
 @st.cache_data(ttl=CACHE_DURATION_ANALYSIS)
@@ -575,7 +572,7 @@ class UserManager:
             return 0, 0, 0, 0
 
 # ============================================
-# 📊 Main Analyzer - Bybit Version
+# 📊 Main Analyzer - Bitget Version
 # ============================================
 
 class CryptoAnalyzer:
@@ -617,7 +614,6 @@ class CryptoAnalyzer:
     def fetch_data(self, symbol):
         try:
             df_1h = fetch_candles_cached(symbol, '1h', MAX_CANDLES)
-            time.sleep(0.3)
             df_4h = fetch_candles_cached(symbol, '4h', MAX_CANDLES // 2)
             
             if df_1h is not None:
@@ -625,7 +621,7 @@ class CryptoAnalyzer:
             if df_4h is not None:
                 df_4h = calculate_indicators_cached(df_4h)
             
-            # جلب بيانات الصفقات (حتى لو فشلت لا تؤثر)
+            # جلب بيانات الصفقات
             self.fetch_trades_data(symbol)
             
             if df_1h is not None:
@@ -709,7 +705,6 @@ class CryptoAnalyzer:
             if trades_df is not None and not trades_df.empty:
                 self.trades_data[symbol] = trades_df
         except Exception as e:
-            # لا نعرض خطأ هنا لأنه لا يؤثر على التحليل الرئيسي
             pass
     
     def calculate_indicators_15m(self, df):
@@ -3416,7 +3411,7 @@ def analysis_interface():
     <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); 
                 border-radius: 15px; margin-bottom: 30px;">
         <h1 style="color: white;">🧠 Advanced Liquidity Analyzer</h1>
-        <p style="color: #e0f0ff;">Bybit | Candles + Liquidity + Liquidation + Magnetic Zones</p>
+        <p style="color: #e0f0ff;">Bitget | Candles + Liquidity + Liquidation + Magnetic Zones</p>
     </div>
     """, unsafe_allow_html=True)
     
