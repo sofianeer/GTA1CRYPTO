@@ -18,132 +18,231 @@ warnings.filterwarnings('ignore')
 # 🔧 Settings
 # ============================================
 
-CACHE_DURATION_DATA = 60
+CACHE_DURATION_DATA = 120  # 2 دقائق
 CACHE_DURATION_ANALYSIS = 300
-RATE_LIMIT_SECONDS = 2
 MAX_CANDLES = 500
+RATE_LIMIT_DELAY = 0.5
 
 ADMIN_USERNAME = "adminSO"
 ADMIN_PASSWORD = "admin25SO"
-SUBSCRIPTION_PRICE = "99$"
+
+# قائمة الرموز التي هي فيوتشر فقط على Bybit
+FUTURE_ONLY_SYMBOLS = ['XAU/USDT', 'XAG/USDT', 'BTC/USDT:USDT', 'ETH/USDT:USDT']
 
 # ============================================
-# 🏦 OKX Exchange (Spot + Futures - Auto Detect)
+# 🏦 Bybit Exchange (Spot + Futures)
 # ============================================
 
 @st.cache_resource
 def get_exchange_spot():
-    """OKX Spot"""
+    """Bybit Spot"""
     try:
-        exchange = ccxt.okx({
+        exchange = ccxt.bybit({
             'rateLimit': 3000,
             'enableRateLimit': True,
-            'options': {'defaultType': 'spot'}
+            'options': {
+                'defaultType': 'spot',
+                'adjustForTimeDifference': True
+            }
         })
         exchange.fetch_ohlcv('BTC/USDT', '1h', limit=1)
         return exchange
-    except:
+    except Exception as e:
+        st.error(f"❌ Bybit Spot connection error: {str(e)}")
         return None
 
 @st.cache_resource
 def get_exchange_future():
-    """OKX Futures (Perpetual)"""
+    """Bybit Futures (Perpetual)"""
     try:
-        exchange = ccxt.okx({
+        exchange = ccxt.bybit({
             'rateLimit': 3000,
             'enableRateLimit': True,
-            'options': {'defaultType': 'swap'}
+            'options': {
+                'defaultType': 'swap',
+                'adjustForTimeDifference': True
+            }
         })
         exchange.fetch_ohlcv('BTC/USDT:USDT', '1h', limit=1)
         return exchange
-    except:
+    except Exception as e:
+        st.error(f"❌ Bybit Futures connection error: {str(e)}")
         return None
 
 # ============================================
-# 📊 Data Fetcher (Auto Detect Market)
+# 📊 Data Fetcher - مع إدارة الطلبات
 # ============================================
+
+def fetch_with_retry(exchange, symbol, timeframe, limit, max_retries=3):
+    """جلب البيانات مع إعادة المحاولة"""
+    for attempt in range(max_retries):
+        try:
+            if attempt > 0:
+                time.sleep(RATE_LIMIT_DELAY * attempt)
+            
+            if timeframe:
+                ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+            else:
+                ohlcv = exchange.fetch_trades(symbol, limit=limit)
+            
+            if ohlcv and len(ohlcv) > 0:
+                return ohlcv
+        except ccxt.RateLimitExceeded:
+            if attempt == max_retries - 1:
+                st.warning(f"⏳ Rate limit exceeded. Retrying...")
+                time.sleep(5)
+            else:
+                time.sleep(RATE_LIMIT_DELAY * 2)
+        except ccxt.BadSymbol as e:
+            st.error(f"❌ Symbol {symbol} not found on Bybit")
+            return None
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise e
+            time.sleep(RATE_LIMIT_DELAY)
+    
+    return None
+
+def detect_market_type(symbol):
+    """كشف نوع السوق (سبوت أو فيوتشر)"""
+    clean_symbol = symbol.upper().strip()
+    
+    # 1. كشف من الصيغة
+    if ':' in clean_symbol:
+        return 'future'
+    if clean_symbol.endswith('-PERP') or clean_symbol.endswith('-SWAP'):
+        return 'future'
+    
+    # 2. المعادن الثمينة دائماً فيوتشر
+    if clean_symbol.startswith('XAU') or clean_symbol.startswith('XAG'):
+        return 'future'
+    
+    # 3. قائمة الرموز فيوتشر فقط
+    if clean_symbol in ['BTC/USDT:USDT', 'ETH/USDT:USDT']:
+        return 'future'
+    
+    return 'spot'
+
+def convert_symbol_for_exchange(symbol, market_type):
+    """تحويل الصيغة حسب نوع السوق"""
+    clean_symbol = symbol.upper().strip()
+    
+    if market_type == 'future':
+        if '/' in clean_symbol and ':' not in clean_symbol:
+            return clean_symbol.replace('/', '/') + ':USDT'
+    return clean_symbol
 
 @st.cache_data(ttl=CACHE_DURATION_DATA)
 def fetch_candles_cached(symbol, timeframe='1h', limit=500):
     """
-    جلب البيانات تلقائياً من OKX:
-    - يتعرف على الفيوتشر من الصيغة
-    - سبوت للرموز العادية
+    جلب البيانات من Bybit مع دعم XAU/USDT (فيوتشر فقط)
     """
+    clean_symbol = symbol.upper().strip()
     
-    # تحديد إذا كان فيوتشر أو سبوت
-    is_future = False
+    # كشف نوع السوق
+    market_type = detect_market_type(clean_symbol)
     
-    # إذا كان الرمز يحتوي :USDT أو :USD = فيوتشر
-    if ':' in symbol:
-        is_future = True
-    # إذا كان الرمز ينتهي بـ -PERP أو -SWAP = فيوتشر
-    elif symbol.endswith('-PERP') or symbol.endswith('-SWAP'):
-        is_future = True
-    # إذا كان الرمز XAU/USDT = فيوتشر (لأن الذهب في OKX فقط فيوتشر)
-    elif symbol == 'XAU/USDT':
-        is_future = True
-    
-    # اختيار الـ Exchange
-    if is_future:
+    # اختيار الـ Exchange المناسب
+    if market_type == 'future':
         exchange = get_exchange_future()
-        # تحويل الصيغة للفيوتشر إذا لزم
-        if '/' in symbol and ':' not in symbol:
-            symbol = symbol.replace('/', '/') + ':USDT'
+        clean_symbol = convert_symbol_for_exchange(clean_symbol, market_type)
     else:
         exchange = get_exchange_spot()
     
     if not exchange:
+        st.error(f"❌ Cannot connect to Bybit")
         return None
     
     try:
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+        ohlcv = fetch_with_retry(exchange, clean_symbol, timeframe, min(limit, 1000))
+        
+        if not ohlcv:
+            st.error(f"❌ No data received for {clean_symbol}")
+            return None
+        
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        
         return df
+        
+    except ccxt.BadSymbol as e:
+        st.error(f"❌ Symbol {clean_symbol} not found on Bybit. Try: XAU/USDT:USDT")
+        return None
     except Exception as e:
-        st.error(f"❌ Failed to fetch {symbol}: {str(e)}")
+        st.error(f"❌ Failed to fetch {clean_symbol}: {str(e)}")
+        return None
+
+@st.cache_data(ttl=CACHE_DURATION_DATA)
+def fetch_trades_cached(symbol, limit=500):
+    """جلب الصفقات الأخيرة من Bybit"""
+    try:
+        clean_symbol = symbol.upper().strip()
+        market_type = detect_market_type(clean_symbol)
+        
+        if market_type == 'future':
+            exchange = get_exchange_future()
+            clean_symbol = convert_symbol_for_exchange(clean_symbol, market_type)
+        else:
+            exchange = get_exchange_spot()
+        
+        if not exchange:
+            return None
+        
+        # استخدام fetch_with_retry مع timeframe=None
+        trades = fetch_with_retry(exchange, clean_symbol, None, limit)
+        
+        if not trades:
+            return None
+        
+        trades_data = []
+        for trade in trades:
+            trades_data.append({
+                'timestamp': pd.to_datetime(trade['timestamp'], unit='ms'),
+                'price': trade['price'],
+                'amount': trade['amount'],
+                'cost': trade['cost'],
+                'side': trade['side'],
+                'datetime': trade['datetime']
+            })
+        
+        return pd.DataFrame(trades_data)
+    except Exception as e:
+        st.warning(f"⚠️ Trades fetch warning (不影响分析): {str(e)}")
         return None
 
 @st.cache_data(ttl=CACHE_DURATION_ANALYSIS)
 def calculate_indicators_cached(df):
+    """حساب المؤشرات الفنية"""
     if df is None or df.empty:
         return df
     
-    close = df['close'].values
-    high = df['high'].values
-    low = df['low'].values
-    
-    df['RSI'] = talib.RSI(close, timeperiod=14)
-    df['MACD'], df['MACD_signal'], df['MACD_hist'] = talib.MACD(close)
-    df['SMA_20'] = talib.SMA(close, timeperiod=20)
-    df['SMA_50'] = talib.SMA(close, timeperiod=50)
-    df['EMA_100'] = talib.EMA(close, timeperiod=100)
-    df['ATR'] = talib.ATR(high, low, close, timeperiod=14)
-    df['ADX'] = talib.ADX(high, low, close, timeperiod=14)
-    
-    df['BB_upper'], df['BB_middle'], df['BB_lower'] = talib.BBANDS(
-        close, timeperiod=20, nbdevup=2, nbdevdn=2
-    )
-    
-    df['volume_ma'] = talib.SMA(df['volume'], timeperiod=20)
-    df['OBV'] = talib.OBV(df['close'], df['volume'])
-    
-    typical_price = (df['high'] + df['low'] + df['close']) / 3
-    df['VWAP'] = (df['volume'] * typical_price).cumsum() / df['volume'].cumsum()
-    
-    return df.dropna()
-
-def check_rate_limit():
-    if 'last_click' not in st.session_state:
-        st.session_state.last_click = 0
-    current_time = time.time()
-    if current_time - st.session_state.last_click < RATE_LIMIT_SECONDS:
-        wait = RATE_LIMIT_SECONDS - (current_time - st.session_state.last_click)
-        st.warning(f"⏳ Wait {int(wait) + 1} seconds before trying again")
-        return False
-    st.session_state.last_click = current_time
-    return True
+    try:
+        close = df['close'].values
+        high = df['high'].values
+        low = df['low'].values
+        
+        df['RSI'] = talib.RSI(close, timeperiod=14)
+        df['MACD'], df['MACD_signal'], df['MACD_hist'] = talib.MACD(close)
+        df['SMA_20'] = talib.SMA(close, timeperiod=20)
+        df['SMA_50'] = talib.SMA(close, timeperiod=50)
+        df['EMA_100'] = talib.EMA(close, timeperiod=100)
+        df['ATR'] = talib.ATR(high, low, close, timeperiod=14)
+        df['ADX'] = talib.ADX(high, low, close, timeperiod=14)
+        
+        df['BB_upper'], df['BB_middle'], df['BB_lower'] = talib.BBANDS(
+            close, timeperiod=20, nbdevup=2, nbdevdn=2
+        )
+        
+        df['volume_ma'] = talib.SMA(df['volume'], timeperiod=20)
+        df['OBV'] = talib.OBV(df['close'], df['volume'])
+        
+        typical_price = (df['high'] + df['low'] + df['close']) / 3
+        df['VWAP'] = (df['volume'] * typical_price).cumsum() / df['volume'].cumsum()
+        
+        return df.dropna()
+    except Exception as e:
+        st.error(f"❌ Error calculating indicators: {str(e)}")
+        return df
 
 # ============================================
 # 🗄️ User Management
@@ -377,7 +476,7 @@ class UserManager:
             ''', (new_expiry.isoformat(), username))
             conn.commit()
             conn.close()
-            return True, f"✅ Subscription extended for {username} (+{days} days) until {new_expiry.strftime('%Y-%m-%d')}"
+            return True, f"✅ Subscription extended for {username} (+{days} days)"
         except Exception as e:
             return False, f"❌ Error: {str(e)}"
     
@@ -476,158 +575,49 @@ class UserManager:
             return 0, 0, 0, 0
 
 # ============================================
-# 🎯 Liquidation Zones Detector
-# ============================================
-
-class LiquidationZonesDetector:
-    def __init__(self):
-        self.liquidation_zones = {}
-    
-    def detect_liquidation_zones(self, df, timeframe='1h'):
-        if df is None or len(df) < 50:
-            return []
-        
-        zones = []
-        
-        for i in range(2, len(df)-2):
-            current = df.iloc[i]
-            prev = df.iloc[i-1]
-            next_candle = df.iloc[i+1]
-            next_next = df.iloc[i+2]
-            
-            upper_wick = current['high'] - max(current['open'], current['close'])
-            lower_wick = min(current['open'], current['close']) - current['low']
-            body_size = abs(current['close'] - current['open'])
-            candle_range = current['high'] - current['low']
-            
-            avg_volume = df['volume'].iloc[max(0, i-20):i].mean()
-            volume_ratio = current['volume'] / avg_volume if avg_volume > 0 else 1
-            
-            if candle_range > 0:
-                if (current['volume'] > avg_volume * 2 and
-                    lower_wick > candle_range * 0.4 and
-                    current['close'] > current['open'] and
-                    current['low'] < prev['low'] and
-                    next_candle['close'] > current['high']):
-                    
-                    confirmed = next_next['close'] > next_candle['high']
-                    
-                    zone = {
-                        'price': current['low'],
-                        'timestamp': current.name if hasattr(current, 'name') else i,
-                        'type': 'bullish',
-                        'strength': volume_ratio,
-                        'confirmed': confirmed,
-                        'wick_ratio': lower_wick / candle_range if candle_range > 0 else 0,
-                        'volume_ratio': volume_ratio,
-                        'cluster_size': 1,
-                        'timeframe': timeframe,
-                        'color': 'rgba(255, 255, 0, 0.3)',
-                        'description': '🟢 B-Liq'
-                    }
-                    zones.append(zone)
-                
-                elif (current['volume'] > avg_volume * 2 and
-                      upper_wick > candle_range * 0.4 and
-                      current['close'] < current['open'] and
-                      current['high'] > prev['high'] and
-                      next_candle['close'] < current['low']):
-                    
-                    confirmed = next_next['close'] < next_candle['low']
-                    
-                    zone = {
-                        'price': current['high'],
-                        'timestamp': current.name if hasattr(current, 'name') else i,
-                        'type': 'bearish',
-                        'strength': volume_ratio,
-                        'confirmed': confirmed,
-                        'wick_ratio': upper_wick / candle_range if candle_range > 0 else 0,
-                        'volume_ratio': volume_ratio,
-                        'cluster_size': 1,
-                        'timeframe': timeframe,
-                        'color': 'rgba(255, 255, 0, 0.3)',
-                        'description': '🔴 S-Liq'
-                    }
-                    zones.append(zone)
-        
-        zones = self._cluster_zones(zones, df)
-        zones.sort(key=lambda x: x['strength'], reverse=True)
-        self.liquidation_zones[timeframe] = zones
-        return zones
-    
-    def _cluster_zones(self, zones, df):
-        if len(zones) < 2:
-            return zones
-            
-        prices = np.array([z['price'] for z in zones]).reshape(-1, 1)
-        current_price = df['close'].iloc[-1] if len(df) > 0 else prices.mean()
-        eps = current_price * 0.005
-        
-        clustering = DBSCAN(eps=eps, min_samples=2).fit(prices)
-        labels = clustering.labels_
-        
-        clustered_zones = []
-        unique_labels = set(labels)
-        
-        for label in unique_labels:
-            if label == -1:
-                for i, z in enumerate(zones):
-                    if labels[i] == -1:
-                        clustered_zones.append(z)
-            else:
-                cluster_indices = [i for i, l in enumerate(labels) if l == label]
-                cluster_zones = [zones[i] for i in cluster_indices]
-                
-                merged_zone = {
-                    'price': np.mean([z['price'] for z in cluster_zones]),
-                    'timestamp': max([z['timestamp'] for z in cluster_zones]),
-                    'type': max(set([z['type'] for z in cluster_zones]), key=[z['type'] for z in cluster_zones].count),
-                    'strength': np.mean([z['strength'] for z in cluster_zones]),
-                    'confirmed': any(z['confirmed'] for z in cluster_zones),
-                    'wick_ratio': np.mean([z['wick_ratio'] for z in cluster_zones]),
-                    'volume_ratio': np.mean([z['volume_ratio'] for z in cluster_zones]),
-                    'cluster_size': len(cluster_zones),
-                    'timeframe': cluster_zones[0]['timeframe'],
-                    'color': 'rgba(255, 255, 0, 0.3)',
-                    'description': f"{cluster_zones[0]['description']} x{len(cluster_zones)}"
-                }
-                clustered_zones.append(merged_zone)
-        
-        return clustered_zones
-
-# ============================================
-# 📊 Main Analyzer Class
+# 📊 Main Analyzer - Bybit Version
 # ============================================
 
 class CryptoAnalyzer:
     def __init__(self):
-        self.spot_exchange = get_exchange_spot()
-        self.future_exchange = get_exchange_future()
         self.blue_liquidity_lines = {}
-        self.white_liquidity_levels = {}
-        self.yellow_liquidation_zones = {}
         self.blue_liquidity_lines_15m = {}
-        self.white_liquidity_levels_15m = {}
-        self.yellow_liquidation_zones_15m = {}
         self.blue_liquidity_lines_5m = {}
-        self.white_liquidity_levels_5m = {}
-        self.yellow_liquidation_zones_5m = {}
         self.blue_liquidity_lines_1m = {}
-        self.white_liquidity_levels_1m = {}
-        self.yellow_liquidation_zones_1m = {}
         self.blue_liquidity_lines_4h = {}
+        
+        self.white_liquidity_levels = {}
+        self.white_liquidity_levels_15m = {}
+        self.white_liquidity_levels_5m = {}
+        self.white_liquidity_levels_1m = {}
         self.white_liquidity_levels_4h = {}
+        
+        self.yellow_liquidation_zones = {}
+        self.yellow_liquidation_zones_15m = {}
+        self.yellow_liquidation_zones_5m = {}
+        self.yellow_liquidation_zones_1m = {}
         self.yellow_liquidation_zones_4h = {}
+        
         self.orange_magnetic_zones = {}
         self.orange_magnetic_zones_15m = {}
         self.orange_magnetic_zones_5m = {}
         self.orange_magnetic_zones_1m = {}
         self.orange_magnetic_zones_4h = {}
-        self.liquidation_detector = LiquidationZonesDetector()
-    
+        
+        self.trades_data = {}
+        self.last_fetch_time = {}
+        
+    def _should_refresh(self, symbol):
+        """التحقق إذا كان يجب تحديث البيانات (كل 2 دقيقة)"""
+        now = time.time()
+        if symbol not in self.last_fetch_time:
+            self.last_fetch_time[symbol] = 0
+        return (now - self.last_fetch_time[symbol]) > CACHE_DURATION_DATA
+        
     def fetch_data(self, symbol):
         try:
             df_1h = fetch_candles_cached(symbol, '1h', MAX_CANDLES)
+            time.sleep(0.3)
             df_4h = fetch_candles_cached(symbol, '4h', MAX_CANDLES // 2)
             
             if df_1h is not None:
@@ -635,10 +625,13 @@ class CryptoAnalyzer:
             if df_4h is not None:
                 df_4h = calculate_indicators_cached(df_4h)
             
+            # جلب بيانات الصفقات (حتى لو فشلت لا تؤثر)
+            self.fetch_trades_data(symbol)
+            
             if df_1h is not None:
                 current_price = df_1h['close'].iloc[-1]
-                self.calculate_blue_liquidity_lines(df_1h, df_4h, current_price, symbol)
-                self.calculate_white_liquidity_levels(df_1h, df_4h, current_price, symbol)
+                self.calculate_blue_liquidity_lines(df_1h, current_price, symbol)
+                self.calculate_white_liquidity_levels(df_1h, current_price, symbol)
                 self.calculate_yellow_liquidation_zones(df_1h, symbol)
                 self.calculate_orange_magnetic_zones(df_1h, current_price, symbol)
             
@@ -648,17 +641,8 @@ class CryptoAnalyzer:
                 self.calculate_white_liquidity_levels_4h(df_4h, current_price_4h, symbol)
                 self.calculate_yellow_liquidation_zones_4h(df_4h, symbol)
                 self.calculate_orange_magnetic_zones_4h(df_4h, current_price_4h, symbol)
-                
-                liquidation_zones_4h = self.liquidation_detector.detect_liquidation_zones(df_4h, timeframe='4h')
-                if liquidation_zones_4h:
-                    if symbol not in self.yellow_liquidation_zones_4h:
-                        self.yellow_liquidation_zones_4h[symbol] = []
-                    for zone in liquidation_zones_4h:
-                        zone['color'] = '#FFFF00'
-                        zone['width'] = 2
-                        zone['dash'] = 'dash'
-                        self.yellow_liquidation_zones_4h[symbol].append(zone)
             
+            self.last_fetch_time[symbol] = time.time()
             return df_1h, df_4h
             
         except Exception as e:
@@ -671,23 +655,11 @@ class CryptoAnalyzer:
             
             if df_15m is not None:
                 df_15m = self.calculate_indicators_15m(df_15m)
-            
-            if df_15m is not None:
                 current_price_15m = df_15m['close'].iloc[-1]
                 self.calculate_blue_liquidity_lines_15m(df_15m, current_price_15m, symbol)
                 self.calculate_white_liquidity_levels_15m(df_15m, current_price_15m, symbol)
                 self.calculate_yellow_liquidation_zones_15m(df_15m, symbol)
                 self.calculate_orange_magnetic_zones_15m(df_15m, current_price_15m, symbol)
-                
-                liquidation_zones_15m = self.liquidation_detector.detect_liquidation_zones(df_15m, timeframe='15m')
-                if liquidation_zones_15m:
-                    if symbol not in self.yellow_liquidation_zones_15m:
-                        self.yellow_liquidation_zones_15m[symbol] = []
-                    for zone in liquidation_zones_15m:
-                        zone['color'] = '#FFFF00'
-                        zone['width'] = 2
-                        zone['dash'] = 'dash'
-                        self.yellow_liquidation_zones_15m[symbol].append(zone)
             
             return df_15m
             
@@ -701,23 +673,11 @@ class CryptoAnalyzer:
             
             if df_5m is not None:
                 df_5m = self.calculate_indicators_5m(df_5m)
-            
-            if df_5m is not None:
                 current_price_5m = df_5m['close'].iloc[-1]
                 self.calculate_blue_liquidity_lines_5m(df_5m, current_price_5m, symbol)
                 self.calculate_white_liquidity_levels_5m(df_5m, current_price_5m, symbol)
                 self.calculate_yellow_liquidation_zones_5m(df_5m, symbol)
                 self.calculate_orange_magnetic_zones_5m(df_5m, current_price_5m, symbol)
-                
-                liquidation_zones_5m = self.liquidation_detector.detect_liquidation_zones(df_5m, timeframe='5m')
-                if liquidation_zones_5m:
-                    if symbol not in self.yellow_liquidation_zones_5m:
-                        self.yellow_liquidation_zones_5m[symbol] = []
-                    for zone in liquidation_zones_5m:
-                        zone['color'] = '#FFFF00'
-                        zone['width'] = 2
-                        zone['dash'] = 'dash'
-                        self.yellow_liquidation_zones_5m[symbol].append(zone)
             
             return df_5m
             
@@ -731,29 +691,26 @@ class CryptoAnalyzer:
             
             if df_1m is not None:
                 df_1m = self.calculate_indicators_1m(df_1m)
-            
-            if df_1m is not None:
                 current_price_1m = df_1m['close'].iloc[-1]
                 self.calculate_blue_liquidity_lines_1m(df_1m, current_price_1m, symbol)
                 self.calculate_white_liquidity_levels_1m(df_1m, current_price_1m, symbol)
                 self.calculate_yellow_liquidation_zones_1m(df_1m, symbol)
                 self.calculate_orange_magnetic_zones_1m(df_1m, current_price_1m, symbol)
-                
-                liquidation_zones_1m = self.liquidation_detector.detect_liquidation_zones(df_1m, timeframe='1m')
-                if liquidation_zones_1m:
-                    if symbol not in self.yellow_liquidation_zones_1m:
-                        self.yellow_liquidation_zones_1m[symbol] = []
-                    for zone in liquidation_zones_1m:
-                        zone['color'] = '#FFFF00'
-                        zone['width'] = 2
-                        zone['dash'] = 'dash'
-                        self.yellow_liquidation_zones_1m[symbol].append(zone)
             
             return df_1m
             
         except Exception as e:
             st.error(f"Error fetching 1m for {symbol}: {str(e)}")
             return None
+    
+    def fetch_trades_data(self, symbol, limit=500):
+        try:
+            trades_df = fetch_trades_cached(symbol, limit)
+            if trades_df is not None and not trades_df.empty:
+                self.trades_data[symbol] = trades_df
+        except Exception as e:
+            # لا نعرض خطأ هنا لأنه لا يؤثر على التحليل الرئيسي
+            pass
     
     def calculate_indicators_15m(self, df):
         if df.empty:
@@ -768,10 +725,7 @@ class CryptoAnalyzer:
         df['SMA_20'] = talib.SMA(close, timeperiod=20)
         df['EMA_50'] = talib.EMA(close, timeperiod=50)
         df['ATR'] = talib.ATR(high, low, close, timeperiod=14)
-        
-        df['BB_upper'], df['BB_middle'], df['BB_lower'] = talib.BBANDS(
-            close, timeperiod=20, nbdevup=2, nbdevdn=2
-        )
+        df['BB_upper'], df['BB_middle'], df['BB_lower'] = talib.BBANDS(close, timeperiod=20, nbdevup=2, nbdevdn=2)
         
         typical_price = (df['high'] + df['low'] + df['close']) / 3
         df['VWAP'] = (df['volume'] * typical_price).cumsum() / df['volume'].cumsum()
@@ -792,10 +746,7 @@ class CryptoAnalyzer:
         df['SMA_20'] = talib.SMA(close, timeperiod=20)
         df['EMA_30'] = talib.EMA(close, timeperiod=30)
         df['ATR'] = talib.ATR(high, low, close, timeperiod=10)
-        
-        df['BB_upper'], df['BB_middle'], df['BB_lower'] = talib.BBANDS(
-            close, timeperiod=20, nbdevup=1.5, nbdevdn=1.5
-        )
+        df['BB_upper'], df['BB_middle'], df['BB_lower'] = talib.BBANDS(close, timeperiod=20, nbdevup=1.5, nbdevdn=1.5)
         
         typical_price = (df['high'] + df['low'] + df['close']) / 3
         df['VWAP'] = (df['volume'] * typical_price).cumsum() / df['volume'].cumsum()
@@ -816,16 +767,16 @@ class CryptoAnalyzer:
         df['SMA_10'] = talib.SMA(close, timeperiod=10)
         df['EMA_15'] = talib.EMA(close, timeperiod=15)
         df['ATR'] = talib.ATR(high, low, close, timeperiod=5)
-        
-        df['BB_upper'], df['BB_middle'], df['BB_lower'] = talib.BBANDS(
-            close, timeperiod=20, nbdevup=1.2, nbdevdn=1.2
-        )
+        df['BB_upper'], df['BB_middle'], df['BB_lower'] = talib.BBANDS(close, timeperiod=20, nbdevup=1.2, nbdevdn=1.2)
         
         typical_price = (df['high'] + df['low'] + df['close']) / 3
         df['VWAP'] = (df['volume'] * typical_price).cumsum() / df['volume'].cumsum()
         
         return df.dropna()
     
+    # ======================
+    # Orange Magnetic Zones
+    # ======================
     def calculate_orange_magnetic_zones(self, df, current_price, symbol):
         orange_zones = []
         
@@ -833,60 +784,64 @@ class CryptoAnalyzer:
             self.orange_magnetic_zones[symbol] = orange_zones
             return
         
-        close_prices = df['close'].values
-        returns = np.diff(close_prices) / close_prices[:-1]
-        price_velocity = np.mean(np.abs(returns[-20:])) * 100
-        
-        turning_points = []
-        for i in range(2, len(df)-2):
-            if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
-                df['high'].iloc[i] > df['high'].iloc[i+1] and
-                df['close'].iloc[i] > df['open'].iloc[i]):
-                turning_points.append(df['high'].iloc[i])
+        try:
+            close_prices = df['close'].values
+            returns = np.diff(close_prices) / close_prices[:-1]
+            price_velocity = np.mean(np.abs(returns[-20:])) * 100 if len(returns) >= 20 else 1
             
-            if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
-                df['low'].iloc[i] < df['low'].iloc[i+1] and
-                df['close'].iloc[i] < df['open'].iloc[i]):
-                turning_points.append(df['low'].iloc[i])
-        
-        if len(turning_points) < 5:
-            self.orange_magnetic_zones[symbol] = orange_zones
-            return
-        
-        turning_points = np.array(turning_points[-30:]).reshape(-1, 1)
-        
-        if len(turning_points) >= 3:
-            kmeans = KMeans(n_clusters=min(3, len(turning_points)//3), random_state=42, n_init=10)
-            clusters = kmeans.fit_predict(turning_points)
+            turning_points = []
+            for i in range(2, len(df)-2):
+                if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
+                    df['high'].iloc[i] > df['high'].iloc[i+1] and
+                    df['close'].iloc[i] > df['open'].iloc[i]):
+                    turning_points.append(df['high'].iloc[i])
+                
+                if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
+                    df['low'].iloc[i] < df['low'].iloc[i+1] and
+                    df['close'].iloc[i] < df['open'].iloc[i]):
+                    turning_points.append(df['low'].iloc[i])
             
-            unique_clusters = np.unique(clusters)
-            for cluster_id in unique_clusters:
-                cluster_points = turning_points[clusters == cluster_id]
-                if len(cluster_points) >= 2:
-                    center_price = np.mean(cluster_points)
-                    points_density = len(cluster_points) / (np.std(cluster_points) + 1)
-                    distance_pct = abs(center_price - current_price) / current_price * 100
-                    strength = min(points_density / 10, 1.0) * (1 - distance_pct / 10)
+            if len(turning_points) < 5:
+                self.orange_magnetic_zones[symbol] = orange_zones
+                return
+            
+            turning_points = np.array(turning_points[-30:]).reshape(-1, 1) if len(turning_points) >= 30 else np.array(turning_points).reshape(-1, 1)
+            
+            if len(turning_points) >= 3:
+                n_clusters = min(3, len(turning_points)//3)
+                if n_clusters >= 1:
+                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                    clusters = kmeans.fit_predict(turning_points)
                     
-                    if center_price > current_price:
-                        attraction_direction = "↑"
-                    else:
-                        attraction_direction = "↓"
-                    
-                    if distance_pct < price_velocity * 2:
-                        orange_zones.append({
-                            'price': float(center_price),
-                            'type': 'magnetic_zone',
-                            'strength': float(strength),
-                            'distance_pct': distance_pct,
-                            'price_velocity': price_velocity,
-                            'points_count': len(cluster_points),
-                            'attraction_direction': attraction_direction,
-                            'description': f'🧲 {attraction_direction}',
-                            'color': 'rgba(255, 165, 0, 0.5)',
-                            'width': 2 + strength * 2,
-                            'dash': 'dot' if strength < 0.5 else 'solid'
-                        })
+                    unique_clusters = np.unique(clusters)
+                    for cluster_id in unique_clusters:
+                        cluster_points = turning_points[clusters == cluster_id]
+                        if len(cluster_points) >= 2:
+                            center_price = np.mean(cluster_points)
+                            points_density = len(cluster_points) / (np.std(cluster_points) + 1)
+                            distance_pct = abs(center_price - current_price) / current_price * 100
+                            strength = min(points_density / 10, 1.0) * (1 - distance_pct / 10)
+                            
+                            if center_price > current_price:
+                                attraction_direction = "↑"
+                            else:
+                                attraction_direction = "↓"
+                            
+                            if distance_pct < price_velocity * 2:
+                                orange_zones.append({
+                                    'price': float(center_price),
+                                    'type': 'magnetic_zone',
+                                    'strength': float(strength),
+                                    'distance_pct': distance_pct,
+                                    'points_count': len(cluster_points),
+                                    'attraction_direction': attraction_direction,
+                                    'description': f'🧲 {attraction_direction}',
+                                    'color': 'rgba(255, 165, 0, 0.5)',
+                                    'width': 2 + strength * 2,
+                                    'dash': 'dot' if strength < 0.5 else 'solid'
+                                })
+        except Exception as e:
+            pass
         
         orange_zones.sort(key=lambda x: x['strength'], reverse=True)
         self.orange_magnetic_zones[symbol] = orange_zones[:5]
@@ -898,60 +853,64 @@ class CryptoAnalyzer:
             self.orange_magnetic_zones_15m[symbol] = orange_zones
             return
         
-        close_prices = df['close'].values
-        returns = np.diff(close_prices) / close_prices[:-1]
-        price_velocity = np.mean(np.abs(returns[-30:])) * 100
-        
-        turning_points = []
-        for i in range(2, len(df)-2):
-            if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
-                df['high'].iloc[i] > df['high'].iloc[i+1] and
-                df['close'].iloc[i] > df['open'].iloc[i]):
-                turning_points.append(df['high'].iloc[i])
+        try:
+            close_prices = df['close'].values
+            returns = np.diff(close_prices) / close_prices[:-1]
+            price_velocity = np.mean(np.abs(returns[-30:])) * 100 if len(returns) >= 30 else 1
             
-            if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
-                df['low'].iloc[i] < df['low'].iloc[i+1] and
-                df['close'].iloc[i] < df['open'].iloc[i]):
-                turning_points.append(df['low'].iloc[i])
-        
-        if len(turning_points) < 5:
-            self.orange_magnetic_zones_15m[symbol] = orange_zones
-            return
-        
-        turning_points = np.array(turning_points[-40:]).reshape(-1, 1)
-        
-        if len(turning_points) >= 3:
-            kmeans = KMeans(n_clusters=min(4, len(turning_points)//3), random_state=42, n_init=10)
-            clusters = kmeans.fit_predict(turning_points)
+            turning_points = []
+            for i in range(2, len(df)-2):
+                if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
+                    df['high'].iloc[i] > df['high'].iloc[i+1] and
+                    df['close'].iloc[i] > df['open'].iloc[i]):
+                    turning_points.append(df['high'].iloc[i])
+                
+                if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
+                    df['low'].iloc[i] < df['low'].iloc[i+1] and
+                    df['close'].iloc[i] < df['open'].iloc[i]):
+                    turning_points.append(df['low'].iloc[i])
             
-            unique_clusters = np.unique(clusters)
-            for cluster_id in unique_clusters:
-                cluster_points = turning_points[clusters == cluster_id]
-                if len(cluster_points) >= 2:
-                    center_price = np.mean(cluster_points)
-                    points_density = len(cluster_points) / (np.std(cluster_points) + 1)
-                    distance_pct = abs(center_price - current_price) / current_price * 100
-                    strength = min(points_density / 10, 1.0) * (1 - distance_pct / 8)
+            if len(turning_points) < 5:
+                self.orange_magnetic_zones_15m[symbol] = orange_zones
+                return
+            
+            turning_points = np.array(turning_points[-40:]).reshape(-1, 1) if len(turning_points) >= 40 else np.array(turning_points).reshape(-1, 1)
+            
+            if len(turning_points) >= 3:
+                n_clusters = min(4, len(turning_points)//3)
+                if n_clusters >= 1:
+                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                    clusters = kmeans.fit_predict(turning_points)
                     
-                    if center_price > current_price:
-                        attraction_direction = "↑"
-                    else:
-                        attraction_direction = "↓"
-                    
-                    if distance_pct < price_velocity * 2:
-                        orange_zones.append({
-                            'price': float(center_price),
-                            'type': 'magnetic_zone_15m',
-                            'strength': float(strength),
-                            'distance_pct': distance_pct,
-                            'price_velocity': price_velocity,
-                            'points_count': len(cluster_points),
-                            'attraction_direction': attraction_direction,
-                            'description': f'🧲{attraction_direction}',
-                            'color': 'rgba(255, 165, 0, 0.5)',
-                            'width': 2 + strength * 2,
-                            'dash': 'dot' if strength < 0.5 else 'solid'
-                        })
+                    unique_clusters = np.unique(clusters)
+                    for cluster_id in unique_clusters:
+                        cluster_points = turning_points[clusters == cluster_id]
+                        if len(cluster_points) >= 2:
+                            center_price = np.mean(cluster_points)
+                            points_density = len(cluster_points) / (np.std(cluster_points) + 1)
+                            distance_pct = abs(center_price - current_price) / current_price * 100
+                            strength = min(points_density / 10, 1.0) * (1 - distance_pct / 8)
+                            
+                            if center_price > current_price:
+                                attraction_direction = "↑"
+                            else:
+                                attraction_direction = "↓"
+                            
+                            if distance_pct < price_velocity * 2:
+                                orange_zones.append({
+                                    'price': float(center_price),
+                                    'type': 'magnetic_zone_15m',
+                                    'strength': float(strength),
+                                    'distance_pct': distance_pct,
+                                    'points_count': len(cluster_points),
+                                    'attraction_direction': attraction_direction,
+                                    'description': f'🧲{attraction_direction}',
+                                    'color': 'rgba(255, 165, 0, 0.5)',
+                                    'width': 2 + strength * 2,
+                                    'dash': 'dot' if strength < 0.5 else 'solid'
+                                })
+        except Exception as e:
+            pass
         
         orange_zones.sort(key=lambda x: x['strength'], reverse=True)
         self.orange_magnetic_zones_15m[symbol] = orange_zones[:5]
@@ -963,60 +922,64 @@ class CryptoAnalyzer:
             self.orange_magnetic_zones_5m[symbol] = orange_zones
             return
         
-        close_prices = df['close'].values
-        returns = np.diff(close_prices) / close_prices[:-1]
-        price_velocity = np.mean(np.abs(returns[-40:])) * 100
-        
-        turning_points = []
-        for i in range(2, len(df)-2):
-            if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
-                df['high'].iloc[i] > df['high'].iloc[i+1] and
-                df['close'].iloc[i] > df['open'].iloc[i]):
-                turning_points.append(df['high'].iloc[i])
+        try:
+            close_prices = df['close'].values
+            returns = np.diff(close_prices) / close_prices[:-1]
+            price_velocity = np.mean(np.abs(returns[-40:])) * 100 if len(returns) >= 40 else 1
             
-            if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
-                df['low'].iloc[i] < df['low'].iloc[i+1] and
-                df['close'].iloc[i] < df['open'].iloc[i]):
-                turning_points.append(df['low'].iloc[i])
-        
-        if len(turning_points) < 5:
-            self.orange_magnetic_zones_5m[symbol] = orange_zones
-            return
-        
-        turning_points = np.array(turning_points[-50:]).reshape(-1, 1)
-        
-        if len(turning_points) >= 3:
-            kmeans = KMeans(n_clusters=min(5, len(turning_points)//3), random_state=42, n_init=10)
-            clusters = kmeans.fit_predict(turning_points)
+            turning_points = []
+            for i in range(2, len(df)-2):
+                if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
+                    df['high'].iloc[i] > df['high'].iloc[i+1] and
+                    df['close'].iloc[i] > df['open'].iloc[i]):
+                    turning_points.append(df['high'].iloc[i])
+                
+                if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
+                    df['low'].iloc[i] < df['low'].iloc[i+1] and
+                    df['close'].iloc[i] < df['open'].iloc[i]):
+                    turning_points.append(df['low'].iloc[i])
             
-            unique_clusters = np.unique(clusters)
-            for cluster_id in unique_clusters:
-                cluster_points = turning_points[clusters == cluster_id]
-                if len(cluster_points) >= 2:
-                    center_price = np.mean(cluster_points)
-                    points_density = len(cluster_points) / (np.std(cluster_points) + 1)
-                    distance_pct = abs(center_price - current_price) / current_price * 100
-                    strength = min(points_density / 10, 1.0) * (1 - distance_pct / 5)
+            if len(turning_points) < 5:
+                self.orange_magnetic_zones_5m[symbol] = orange_zones
+                return
+            
+            turning_points = np.array(turning_points[-50:]).reshape(-1, 1) if len(turning_points) >= 50 else np.array(turning_points).reshape(-1, 1)
+            
+            if len(turning_points) >= 3:
+                n_clusters = min(5, len(turning_points)//3)
+                if n_clusters >= 1:
+                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                    clusters = kmeans.fit_predict(turning_points)
                     
-                    if center_price > current_price:
-                        attraction_direction = "↑"
-                    else:
-                        attraction_direction = "↓"
-                    
-                    if distance_pct < price_velocity * 2:
-                        orange_zones.append({
-                            'price': float(center_price),
-                            'type': 'magnetic_zone_5m',
-                            'strength': float(strength),
-                            'distance_pct': distance_pct,
-                            'price_velocity': price_velocity,
-                            'points_count': len(cluster_points),
-                            'attraction_direction': attraction_direction,
-                            'description': f'🧲{attraction_direction}',
-                            'color': 'rgba(255, 165, 0, 0.5)',
-                            'width': 2 + strength * 2,
-                            'dash': 'dot' if strength < 0.5 else 'solid'
-                        })
+                    unique_clusters = np.unique(clusters)
+                    for cluster_id in unique_clusters:
+                        cluster_points = turning_points[clusters == cluster_id]
+                        if len(cluster_points) >= 2:
+                            center_price = np.mean(cluster_points)
+                            points_density = len(cluster_points) / (np.std(cluster_points) + 1)
+                            distance_pct = abs(center_price - current_price) / current_price * 100
+                            strength = min(points_density / 10, 1.0) * (1 - distance_pct / 5)
+                            
+                            if center_price > current_price:
+                                attraction_direction = "↑"
+                            else:
+                                attraction_direction = "↓"
+                            
+                            if distance_pct < price_velocity * 2:
+                                orange_zones.append({
+                                    'price': float(center_price),
+                                    'type': 'magnetic_zone_5m',
+                                    'strength': float(strength),
+                                    'distance_pct': distance_pct,
+                                    'points_count': len(cluster_points),
+                                    'attraction_direction': attraction_direction,
+                                    'description': f'🧲{attraction_direction}',
+                                    'color': 'rgba(255, 165, 0, 0.5)',
+                                    'width': 2 + strength * 2,
+                                    'dash': 'dot' if strength < 0.5 else 'solid'
+                                })
+        except Exception as e:
+            pass
         
         orange_zones.sort(key=lambda x: x['strength'], reverse=True)
         self.orange_magnetic_zones_5m[symbol] = orange_zones[:6]
@@ -1028,60 +991,64 @@ class CryptoAnalyzer:
             self.orange_magnetic_zones_1m[symbol] = orange_zones
             return
         
-        close_prices = df['close'].values
-        returns = np.diff(close_prices) / close_prices[:-1]
-        price_velocity = np.mean(np.abs(returns[-50:])) * 100
-        
-        turning_points = []
-        for i in range(2, len(df)-2):
-            if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
-                df['high'].iloc[i] > df['high'].iloc[i+1] and
-                df['close'].iloc[i] > df['open'].iloc[i]):
-                turning_points.append(df['high'].iloc[i])
+        try:
+            close_prices = df['close'].values
+            returns = np.diff(close_prices) / close_prices[:-1]
+            price_velocity = np.mean(np.abs(returns[-50:])) * 100 if len(returns) >= 50 else 1
             
-            if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
-                df['low'].iloc[i] < df['low'].iloc[i+1] and
-                df['close'].iloc[i] < df['open'].iloc[i]):
-                turning_points.append(df['low'].iloc[i])
-        
-        if len(turning_points) < 5:
-            self.orange_magnetic_zones_1m[symbol] = orange_zones
-            return
-        
-        turning_points = np.array(turning_points[-60:]).reshape(-1, 1)
-        
-        if len(turning_points) >= 3:
-            kmeans = KMeans(n_clusters=min(6, len(turning_points)//3), random_state=42, n_init=10)
-            clusters = kmeans.fit_predict(turning_points)
+            turning_points = []
+            for i in range(2, len(df)-2):
+                if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
+                    df['high'].iloc[i] > df['high'].iloc[i+1] and
+                    df['close'].iloc[i] > df['open'].iloc[i]):
+                    turning_points.append(df['high'].iloc[i])
+                
+                if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
+                    df['low'].iloc[i] < df['low'].iloc[i+1] and
+                    df['close'].iloc[i] < df['open'].iloc[i]):
+                    turning_points.append(df['low'].iloc[i])
             
-            unique_clusters = np.unique(clusters)
-            for cluster_id in unique_clusters:
-                cluster_points = turning_points[clusters == cluster_id]
-                if len(cluster_points) >= 2:
-                    center_price = np.mean(cluster_points)
-                    points_density = len(cluster_points) / (np.std(cluster_points) + 1)
-                    distance_pct = abs(center_price - current_price) / current_price * 100
-                    strength = min(points_density / 10, 1.0) * (1 - distance_pct / 3)
+            if len(turning_points) < 5:
+                self.orange_magnetic_zones_1m[symbol] = orange_zones
+                return
+            
+            turning_points = np.array(turning_points[-60:]).reshape(-1, 1) if len(turning_points) >= 60 else np.array(turning_points).reshape(-1, 1)
+            
+            if len(turning_points) >= 3:
+                n_clusters = min(6, len(turning_points)//3)
+                if n_clusters >= 1:
+                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                    clusters = kmeans.fit_predict(turning_points)
                     
-                    if center_price > current_price:
-                        attraction_direction = "↑"
-                    else:
-                        attraction_direction = "↓"
-                    
-                    if distance_pct < price_velocity * 1.5:
-                        orange_zones.append({
-                            'price': float(center_price),
-                            'type': 'magnetic_zone_1m',
-                            'strength': float(strength),
-                            'distance_pct': distance_pct,
-                            'price_velocity': price_velocity,
-                            'points_count': len(cluster_points),
-                            'attraction_direction': attraction_direction,
-                            'description': f'🧲{attraction_direction}',
-                            'color': 'rgba(255, 165, 0, 0.5)',
-                            'width': 1.5 + strength * 2,
-                            'dash': 'dot' if strength < 0.5 else 'solid'
-                        })
+                    unique_clusters = np.unique(clusters)
+                    for cluster_id in unique_clusters:
+                        cluster_points = turning_points[clusters == cluster_id]
+                        if len(cluster_points) >= 2:
+                            center_price = np.mean(cluster_points)
+                            points_density = len(cluster_points) / (np.std(cluster_points) + 1)
+                            distance_pct = abs(center_price - current_price) / current_price * 100
+                            strength = min(points_density / 10, 1.0) * (1 - distance_pct / 3)
+                            
+                            if center_price > current_price:
+                                attraction_direction = "↑"
+                            else:
+                                attraction_direction = "↓"
+                            
+                            if distance_pct < price_velocity * 1.5:
+                                orange_zones.append({
+                                    'price': float(center_price),
+                                    'type': 'magnetic_zone_1m',
+                                    'strength': float(strength),
+                                    'distance_pct': distance_pct,
+                                    'points_count': len(cluster_points),
+                                    'attraction_direction': attraction_direction,
+                                    'description': f'🧲{attraction_direction}',
+                                    'color': 'rgba(255, 165, 0, 0.5)',
+                                    'width': 1.5 + strength * 2,
+                                    'dash': 'dot' if strength < 0.5 else 'solid'
+                                })
+        except Exception as e:
+            pass
         
         orange_zones.sort(key=lambda x: x['strength'], reverse=True)
         self.orange_magnetic_zones_1m[symbol] = orange_zones[:7]
@@ -1093,64 +1060,71 @@ class CryptoAnalyzer:
             self.orange_magnetic_zones_4h[symbol] = orange_zones
             return
         
-        close_prices = df['close'].values
-        returns = np.diff(close_prices) / close_prices[:-1]
-        price_velocity = np.mean(np.abs(returns[-15:])) * 100
-        
-        turning_points = []
-        for i in range(2, len(df)-2):
-            if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
-                df['high'].iloc[i] > df['high'].iloc[i+1] and
-                df['close'].iloc[i] > df['open'].iloc[i]):
-                turning_points.append(df['high'].iloc[i])
+        try:
+            close_prices = df['close'].values
+            returns = np.diff(close_prices) / close_prices[:-1]
+            price_velocity = np.mean(np.abs(returns[-15:])) * 100 if len(returns) >= 15 else 1
             
-            if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
-                df['low'].iloc[i] < df['low'].iloc[i+1] and
-                df['close'].iloc[i] < df['open'].iloc[i]):
-                turning_points.append(df['low'].iloc[i])
-        
-        if len(turning_points) < 5:
-            self.orange_magnetic_zones_4h[symbol] = orange_zones
-            return
-        
-        turning_points = np.array(turning_points[-20:]).reshape(-1, 1)
-        
-        if len(turning_points) >= 3:
-            kmeans = KMeans(n_clusters=min(3, len(turning_points)//3), random_state=42, n_init=10)
-            clusters = kmeans.fit_predict(turning_points)
+            turning_points = []
+            for i in range(2, len(df)-2):
+                if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
+                    df['high'].iloc[i] > df['high'].iloc[i+1] and
+                    df['close'].iloc[i] > df['open'].iloc[i]):
+                    turning_points.append(df['high'].iloc[i])
+                
+                if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
+                    df['low'].iloc[i] < df['low'].iloc[i+1] and
+                    df['close'].iloc[i] < df['open'].iloc[i]):
+                    turning_points.append(df['low'].iloc[i])
             
-            unique_clusters = np.unique(clusters)
-            for cluster_id in unique_clusters:
-                cluster_points = turning_points[clusters == cluster_id]
-                if len(cluster_points) >= 2:
-                    center_price = np.mean(cluster_points)
-                    points_density = len(cluster_points) / (np.std(cluster_points) + 1)
-                    distance_pct = abs(center_price - current_price) / current_price * 100
-                    strength = min(points_density / 10, 1.0) * (1 - distance_pct / 15)
+            if len(turning_points) < 5:
+                self.orange_magnetic_zones_4h[symbol] = orange_zones
+                return
+            
+            turning_points = np.array(turning_points[-20:]).reshape(-1, 1) if len(turning_points) >= 20 else np.array(turning_points).reshape(-1, 1)
+            
+            if len(turning_points) >= 3:
+                n_clusters = min(3, len(turning_points)//3)
+                if n_clusters >= 1:
+                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                    clusters = kmeans.fit_predict(turning_points)
                     
-                    if center_price > current_price:
-                        attraction_direction = "↑"
-                    else:
-                        attraction_direction = "↓"
-                    
-                    if distance_pct < price_velocity * 2:
-                        orange_zones.append({
-                            'price': float(center_price),
-                            'type': 'magnetic_zone_4h',
-                            'strength': float(strength),
-                            'distance_pct': distance_pct,
-                            'price_velocity': price_velocity,
-                            'points_count': len(cluster_points),
-                            'attraction_direction': attraction_direction,
-                            'description': f'🧲{attraction_direction}',
-                            'color': 'rgba(255, 165, 0, 0.5)',
-                            'width': 2 + strength * 2,
-                            'dash': 'dot' if strength < 0.5 else 'solid'
-                        })
+                    unique_clusters = np.unique(clusters)
+                    for cluster_id in unique_clusters:
+                        cluster_points = turning_points[clusters == cluster_id]
+                        if len(cluster_points) >= 2:
+                            center_price = np.mean(cluster_points)
+                            points_density = len(cluster_points) / (np.std(cluster_points) + 1)
+                            distance_pct = abs(center_price - current_price) / current_price * 100
+                            strength = min(points_density / 10, 1.0) * (1 - distance_pct / 15)
+                            
+                            if center_price > current_price:
+                                attraction_direction = "↑"
+                            else:
+                                attraction_direction = "↓"
+                            
+                            if distance_pct < price_velocity * 2:
+                                orange_zones.append({
+                                    'price': float(center_price),
+                                    'type': 'magnetic_zone_4h',
+                                    'strength': float(strength),
+                                    'distance_pct': distance_pct,
+                                    'points_count': len(cluster_points),
+                                    'attraction_direction': attraction_direction,
+                                    'description': f'🧲{attraction_direction}',
+                                    'color': 'rgba(255, 165, 0, 0.5)',
+                                    'width': 2 + strength * 2,
+                                    'dash': 'dot' if strength < 0.5 else 'solid'
+                                })
+        except Exception as e:
+            pass
         
         orange_zones.sort(key=lambda x: x['strength'], reverse=True)
         self.orange_magnetic_zones_4h[symbol] = orange_zones[:4]
     
+    # ======================
+    # Yellow Liquidation Zones
+    # ======================
     def calculate_yellow_liquidation_zones(self, df, symbol):
         yellow_zones = []
         
@@ -1158,63 +1132,64 @@ class CryptoAnalyzer:
             self.yellow_liquidation_zones[symbol] = yellow_zones
             return
         
-        current_price = df['close'].iloc[-1]
-        
-        if len(df) >= 100:
-            high_idx = argrelextrema(df['high'].values, np.greater, order=10)[0]
-            low_idx = argrelextrema(df['low'].values, np.less, order=10)[0]
+        try:
+            current_price = df['close'].iloc[-1]
             
-            support_levels = []
-            for idx in low_idx[-10:]:
-                price = df['low'].iloc[idx]
-                distance_pct = abs(price - current_price) / current_price * 100
-                if distance_pct <= 5:
-                    touches = 0
-                    for i in range(max(0, idx-5), min(len(df), idx+5)):
-                        if abs(df['low'].iloc[i] - price) <= price * 0.005:
-                            touches += 1
-                    
-                    strength = min(touches / 5, 1.0)
-                    support_levels.append((price, strength))
-            
-            resistance_levels = []
-            for idx in high_idx[-10:]:
-                price = df['high'].iloc[idx]
-                distance_pct = abs(price - current_price) / current_price * 100
-                if distance_pct <= 5:
-                    touches = 0
-                    for i in range(max(0, idx-5), min(len(df), idx+5)):
-                        if abs(df['high'].iloc[i] - price) <= price * 0.005:
-                            touches += 1
-                    
-                    strength = min(touches / 5, 1.0)
-                    resistance_levels.append((price, strength))
-            
-            for price, strength in support_levels[:3]:
-                yellow_zones.append({
-                    'price': price,
-                    'type': 'support_zone',
-                    'strength': strength,
-                    'volume': 0,
-                    'description': f'🟡 S ({strength:.2f})',
-                    'color': '#FFFF00',
-                    'width': 1 + (strength * 2),
-                    'dash': 'dash',
-                    'distance_pct': abs(price - current_price) / current_price * 100
-                })
-            
-            for price, strength in resistance_levels[:3]:
-                yellow_zones.append({
-                    'price': price,
-                    'type': 'resistance_zone',
-                    'strength': strength,
-                    'volume': 0,
-                    'description': f'🟡 R ({strength:.2f})',
-                    'color': '#FFFF00',
-                    'width': 1 + (strength * 2),
-                    'dash': 'dash',
-                    'distance_pct': abs(price - current_price) / current_price * 100
-                })
+            if len(df) >= 100:
+                high_idx = argrelextrema(df['high'].values, np.greater, order=10)[0]
+                low_idx = argrelextrema(df['low'].values, np.less, order=10)[0]
+                
+                support_levels = []
+                for idx in low_idx[-10:]:
+                    price = df['low'].iloc[idx]
+                    distance_pct = abs(price - current_price) / current_price * 100
+                    if distance_pct <= 5:
+                        touches = 0
+                        for i in range(max(0, idx-5), min(len(df), idx+5)):
+                            if abs(df['low'].iloc[i] - price) <= price * 0.005:
+                                touches += 1
+                        
+                        strength = min(touches / 5, 1.0)
+                        support_levels.append((price, strength))
+                
+                resistance_levels = []
+                for idx in high_idx[-10:]:
+                    price = df['high'].iloc[idx]
+                    distance_pct = abs(price - current_price) / current_price * 100
+                    if distance_pct <= 5:
+                        touches = 0
+                        for i in range(max(0, idx-5), min(len(df), idx+5)):
+                            if abs(df['high'].iloc[i] - price) <= price * 0.005:
+                                touches += 1
+                        
+                        strength = min(touches / 5, 1.0)
+                        resistance_levels.append((price, strength))
+                
+                for price, strength in support_levels[:3]:
+                    yellow_zones.append({
+                        'price': price,
+                        'type': 'support_zone',
+                        'strength': strength,
+                        'description': f'🟡 S ({strength:.2f})',
+                        'color': '#FFFF00',
+                        'width': 1 + (strength * 2),
+                        'dash': 'dash',
+                        'distance_pct': abs(price - current_price) / current_price * 100
+                    })
+                
+                for price, strength in resistance_levels[:3]:
+                    yellow_zones.append({
+                        'price': price,
+                        'type': 'resistance_zone',
+                        'strength': strength,
+                        'description': f'🟡 R ({strength:.2f})',
+                        'color': '#FFFF00',
+                        'width': 1 + (strength * 2),
+                        'dash': 'dash',
+                        'distance_pct': abs(price - current_price) / current_price * 100
+                    })
+        except Exception as e:
+            pass
         
         yellow_zones.sort(key=lambda x: x['strength'], reverse=True)
         self.yellow_liquidation_zones[symbol] = yellow_zones[:5]
@@ -1226,63 +1201,64 @@ class CryptoAnalyzer:
             self.yellow_liquidation_zones_15m[symbol] = yellow_zones
             return
         
-        current_price = df['close'].iloc[-1]
-        
-        if len(df) >= 100:
-            high_idx = argrelextrema(df['high'].values, np.greater, order=8)[0]
-            low_idx = argrelextrema(df['low'].values, np.less, order=8)[0]
+        try:
+            current_price = df['close'].iloc[-1]
             
-            support_levels = []
-            for idx in low_idx[-15:]:
-                price = df['low'].iloc[idx]
-                distance_pct = abs(price - current_price) / current_price * 100
-                if distance_pct <= 3:
-                    touches = 0
-                    for i in range(max(0, idx-3), min(len(df), idx+3)):
-                        if abs(df['low'].iloc[i] - price) <= price * 0.003:
-                            touches += 1
-                    
-                    strength = min(touches / 3, 1.0)
-                    support_levels.append((price, strength))
-            
-            resistance_levels = []
-            for idx in high_idx[-15:]:
-                price = df['high'].iloc[idx]
-                distance_pct = abs(price - current_price) / current_price * 100
-                if distance_pct <= 3:
-                    touches = 0
-                    for i in range(max(0, idx-3), min(len(df), idx+3)):
-                        if abs(df['high'].iloc[i] - price) <= price * 0.003:
-                            touches += 1
-                    
-                    strength = min(touches / 3, 1.0)
-                    resistance_levels.append((price, strength))
-            
-            for price, strength in support_levels[:4]:
-                yellow_zones.append({
-                    'price': price,
-                    'type': 'support_zone_15m',
-                    'strength': strength,
-                    'volume': 0,
-                    'description': f'🟡 S15 ({strength:.2f})',
-                    'color': '#FFFF00',
-                    'width': 1 + (strength * 2),
-                    'dash': 'dash',
-                    'distance_pct': abs(price - current_price) / current_price * 100
-                })
-            
-            for price, strength in resistance_levels[:4]:
-                yellow_zones.append({
-                    'price': price,
-                    'type': 'resistance_zone_15m',
-                    'strength': strength,
-                    'volume': 0,
-                    'description': f'🟡 R15 ({strength:.2f})',
-                    'color': '#FFFF00',
-                    'width': 1 + (strength * 2),
-                    'dash': 'dash',
-                    'distance_pct': abs(price - current_price) / current_price * 100
-                })
+            if len(df) >= 100:
+                high_idx = argrelextrema(df['high'].values, np.greater, order=8)[0]
+                low_idx = argrelextrema(df['low'].values, np.less, order=8)[0]
+                
+                support_levels = []
+                for idx in low_idx[-15:]:
+                    price = df['low'].iloc[idx]
+                    distance_pct = abs(price - current_price) / current_price * 100
+                    if distance_pct <= 3:
+                        touches = 0
+                        for i in range(max(0, idx-3), min(len(df), idx+3)):
+                            if abs(df['low'].iloc[i] - price) <= price * 0.003:
+                                touches += 1
+                        
+                        strength = min(touches / 3, 1.0)
+                        support_levels.append((price, strength))
+                
+                resistance_levels = []
+                for idx in high_idx[-15:]:
+                    price = df['high'].iloc[idx]
+                    distance_pct = abs(price - current_price) / current_price * 100
+                    if distance_pct <= 3:
+                        touches = 0
+                        for i in range(max(0, idx-3), min(len(df), idx+3)):
+                            if abs(df['high'].iloc[i] - price) <= price * 0.003:
+                                touches += 1
+                        
+                        strength = min(touches / 3, 1.0)
+                        resistance_levels.append((price, strength))
+                
+                for price, strength in support_levels[:4]:
+                    yellow_zones.append({
+                        'price': price,
+                        'type': 'support_zone_15m',
+                        'strength': strength,
+                        'description': f'🟡 S15 ({strength:.2f})',
+                        'color': '#FFFF00',
+                        'width': 1 + (strength * 2),
+                        'dash': 'dash',
+                        'distance_pct': abs(price - current_price) / current_price * 100
+                    })
+                
+                for price, strength in resistance_levels[:4]:
+                    yellow_zones.append({
+                        'price': price,
+                        'type': 'resistance_zone_15m',
+                        'strength': strength,
+                        'description': f'🟡 R15 ({strength:.2f})',
+                        'color': '#FFFF00',
+                        'width': 1 + (strength * 2),
+                        'dash': 'dash',
+                        'distance_pct': abs(price - current_price) / current_price * 100
+                    })
+        except Exception as e:
+            pass
         
         yellow_zones.sort(key=lambda x: x['strength'], reverse=True)
         self.yellow_liquidation_zones_15m[symbol] = yellow_zones[:5]
@@ -1294,63 +1270,64 @@ class CryptoAnalyzer:
             self.yellow_liquidation_zones_5m[symbol] = yellow_zones
             return
         
-        current_price = df['close'].iloc[-1]
-        
-        if len(df) >= 80:
-            high_idx = argrelextrema(df['high'].values, np.greater, order=5)[0]
-            low_idx = argrelextrema(df['low'].values, np.less, order=5)[0]
+        try:
+            current_price = df['close'].iloc[-1]
             
-            support_levels = []
-            for idx in low_idx[-20:]:
-                price = df['low'].iloc[idx]
-                distance_pct = abs(price - current_price) / current_price * 100
-                if distance_pct <= 2:
-                    touches = 0
-                    for i in range(max(0, idx-2), min(len(df), idx+2)):
-                        if abs(df['low'].iloc[i] - price) <= price * 0.002:
-                            touches += 1
-                    
-                    strength = min(touches / 2, 1.0)
-                    support_levels.append((price, strength))
-            
-            resistance_levels = []
-            for idx in high_idx[-20:]:
-                price = df['high'].iloc[idx]
-                distance_pct = abs(price - current_price) / current_price * 100
-                if distance_pct <= 2:
-                    touches = 0
-                    for i in range(max(0, idx-2), min(len(df), idx+2)):
-                        if abs(df['high'].iloc[i] - price) <= price * 0.002:
-                            touches += 1
-                    
-                    strength = min(touches / 2, 1.0)
-                    resistance_levels.append((price, strength))
-            
-            for price, strength in support_levels[:5]:
-                yellow_zones.append({
-                    'price': price,
-                    'type': 'support_zone_5m',
-                    'strength': strength,
-                    'volume': 0,
-                    'description': f'🟡 S5 ({strength:.2f})',
-                    'color': '#FFFF00',
-                    'width': 1 + (strength * 2),
-                    'dash': 'dash',
-                    'distance_pct': abs(price - current_price) / current_price * 100
-                })
-            
-            for price, strength in resistance_levels[:5]:
-                yellow_zones.append({
-                    'price': price,
-                    'type': 'resistance_zone_5m',
-                    'strength': strength,
-                    'volume': 0,
-                    'description': f'🟡 R5 ({strength:.2f})',
-                    'color': '#FFFF00',
-                    'width': 1 + (strength * 2),
-                    'dash': 'dash',
-                    'distance_pct': abs(price - current_price) / current_price * 100
-                })
+            if len(df) >= 80:
+                high_idx = argrelextrema(df['high'].values, np.greater, order=5)[0]
+                low_idx = argrelextrema(df['low'].values, np.less, order=5)[0]
+                
+                support_levels = []
+                for idx in low_idx[-20:]:
+                    price = df['low'].iloc[idx]
+                    distance_pct = abs(price - current_price) / current_price * 100
+                    if distance_pct <= 2:
+                        touches = 0
+                        for i in range(max(0, idx-2), min(len(df), idx+2)):
+                            if abs(df['low'].iloc[i] - price) <= price * 0.002:
+                                touches += 1
+                        
+                        strength = min(touches / 2, 1.0)
+                        support_levels.append((price, strength))
+                
+                resistance_levels = []
+                for idx in high_idx[-20:]:
+                    price = df['high'].iloc[idx]
+                    distance_pct = abs(price - current_price) / current_price * 100
+                    if distance_pct <= 2:
+                        touches = 0
+                        for i in range(max(0, idx-2), min(len(df), idx+2)):
+                            if abs(df['high'].iloc[i] - price) <= price * 0.002:
+                                touches += 1
+                        
+                        strength = min(touches / 2, 1.0)
+                        resistance_levels.append((price, strength))
+                
+                for price, strength in support_levels[:5]:
+                    yellow_zones.append({
+                        'price': price,
+                        'type': 'support_zone_5m',
+                        'strength': strength,
+                        'description': f'🟡 S5 ({strength:.2f})',
+                        'color': '#FFFF00',
+                        'width': 1 + (strength * 2),
+                        'dash': 'dash',
+                        'distance_pct': abs(price - current_price) / current_price * 100
+                    })
+                
+                for price, strength in resistance_levels[:5]:
+                    yellow_zones.append({
+                        'price': price,
+                        'type': 'resistance_zone_5m',
+                        'strength': strength,
+                        'description': f'🟡 R5 ({strength:.2f})',
+                        'color': '#FFFF00',
+                        'width': 1 + (strength * 2),
+                        'dash': 'dash',
+                        'distance_pct': abs(price - current_price) / current_price * 100
+                    })
+        except Exception as e:
+            pass
         
         yellow_zones.sort(key=lambda x: x['strength'], reverse=True)
         self.yellow_liquidation_zones_5m[symbol] = yellow_zones[:6]
@@ -1362,63 +1339,64 @@ class CryptoAnalyzer:
             self.yellow_liquidation_zones_1m[symbol] = yellow_zones
             return
         
-        current_price = df['close'].iloc[-1]
-        
-        if len(df) >= 60:
-            high_idx = argrelextrema(df['high'].values, np.greater, order=3)[0]
-            low_idx = argrelextrema(df['low'].values, np.less, order=3)[0]
+        try:
+            current_price = df['close'].iloc[-1]
             
-            support_levels = []
-            for idx in low_idx[-25:]:
-                price = df['low'].iloc[idx]
-                distance_pct = abs(price - current_price) / current_price * 100
-                if distance_pct <= 1.5:
-                    touches = 0
-                    for i in range(max(0, idx-1), min(len(df), idx+2)):
-                        if abs(df['low'].iloc[i] - price) <= price * 0.0015:
-                            touches += 1
-                    
-                    strength = min(touches / 2, 1.0)
-                    support_levels.append((price, strength))
-            
-            resistance_levels = []
-            for idx in high_idx[-25:]:
-                price = df['high'].iloc[idx]
-                distance_pct = abs(price - current_price) / current_price * 100
-                if distance_pct <= 1.5:
-                    touches = 0
-                    for i in range(max(0, idx-1), min(len(df), idx+2)):
-                        if abs(df['high'].iloc[i] - price) <= price * 0.0015:
-                            touches += 1
-                    
-                    strength = min(touches / 2, 1.0)
-                    resistance_levels.append((price, strength))
-            
-            for price, strength in support_levels[:6]:
-                yellow_zones.append({
-                    'price': price,
-                    'type': 'support_zone_1m',
-                    'strength': strength,
-                    'volume': 0,
-                    'description': f'🟡 S1 ({strength:.2f})',
-                    'color': '#FFFF00',
-                    'width': 1 + (strength * 1.5),
-                    'dash': 'dash',
-                    'distance_pct': abs(price - current_price) / current_price * 100
-                })
-            
-            for price, strength in resistance_levels[:6]:
-                yellow_zones.append({
-                    'price': price,
-                    'type': 'resistance_zone_1m',
-                    'strength': strength,
-                    'volume': 0,
-                    'description': f'🟡 R1 ({strength:.2f})',
-                    'color': '#FFFF00',
-                    'width': 1 + (strength * 1.5),
-                    'dash': 'dash',
-                    'distance_pct': abs(price - current_price) / current_price * 100
-                })
+            if len(df) >= 60:
+                high_idx = argrelextrema(df['high'].values, np.greater, order=3)[0]
+                low_idx = argrelextrema(df['low'].values, np.less, order=3)[0]
+                
+                support_levels = []
+                for idx in low_idx[-25:]:
+                    price = df['low'].iloc[idx]
+                    distance_pct = abs(price - current_price) / current_price * 100
+                    if distance_pct <= 1.5:
+                        touches = 0
+                        for i in range(max(0, idx-1), min(len(df), idx+2)):
+                            if abs(df['low'].iloc[i] - price) <= price * 0.0015:
+                                touches += 1
+                        
+                        strength = min(touches / 2, 1.0)
+                        support_levels.append((price, strength))
+                
+                resistance_levels = []
+                for idx in high_idx[-25:]:
+                    price = df['high'].iloc[idx]
+                    distance_pct = abs(price - current_price) / current_price * 100
+                    if distance_pct <= 1.5:
+                        touches = 0
+                        for i in range(max(0, idx-1), min(len(df), idx+2)):
+                            if abs(df['high'].iloc[i] - price) <= price * 0.0015:
+                                touches += 1
+                        
+                        strength = min(touches / 2, 1.0)
+                        resistance_levels.append((price, strength))
+                
+                for price, strength in support_levels[:6]:
+                    yellow_zones.append({
+                        'price': price,
+                        'type': 'support_zone_1m',
+                        'strength': strength,
+                        'description': f'🟡 S1 ({strength:.2f})',
+                        'color': '#FFFF00',
+                        'width': 1 + (strength * 1.5),
+                        'dash': 'dash',
+                        'distance_pct': abs(price - current_price) / current_price * 100
+                    })
+                
+                for price, strength in resistance_levels[:6]:
+                    yellow_zones.append({
+                        'price': price,
+                        'type': 'resistance_zone_1m',
+                        'strength': strength,
+                        'description': f'🟡 R1 ({strength:.2f})',
+                        'color': '#FFFF00',
+                        'width': 1 + (strength * 1.5),
+                        'dash': 'dash',
+                        'distance_pct': abs(price - current_price) / current_price * 100
+                    })
+        except Exception as e:
+            pass
         
         yellow_zones.sort(key=lambda x: x['strength'], reverse=True)
         self.yellow_liquidation_zones_1m[symbol] = yellow_zones[:8]
@@ -1430,184 +1408,163 @@ class CryptoAnalyzer:
             self.yellow_liquidation_zones_4h[symbol] = yellow_zones
             return
         
-        current_price = df['close'].iloc[-1]
-        
-        if len(df) >= 100:
-            high_idx = argrelextrema(df['high'].values, np.greater, order=15)[0]
-            low_idx = argrelextrema(df['low'].values, np.less, order=15)[0]
+        try:
+            current_price = df['close'].iloc[-1]
             
-            support_levels = []
-            for idx in low_idx[-8:]:
-                price = df['low'].iloc[idx]
-                distance_pct = abs(price - current_price) / current_price * 100
-                if distance_pct <= 8:
-                    touches = 0
-                    for i in range(max(0, idx-3), min(len(df), idx+3)):
-                        if abs(df['low'].iloc[i] - price) <= price * 0.008:
-                            touches += 1
-                    
-                    strength = min(touches / 3, 1.0)
-                    support_levels.append((price, strength))
-            
-            resistance_levels = []
-            for idx in high_idx[-8:]:
-                price = df['high'].iloc[idx]
-                distance_pct = abs(price - current_price) / current_price * 100
-                if distance_pct <= 8:
-                    touches = 0
-                    for i in range(max(0, idx-3), min(len(df), idx+3)):
-                        if abs(df['high'].iloc[i] - price) <= price * 0.008:
-                            touches += 1
-                    
-                    strength = min(touches / 3, 1.0)
-                    resistance_levels.append((price, strength))
-            
-            for price, strength in support_levels[:3]:
-                yellow_zones.append({
-                    'price': price,
-                    'type': 'support_zone_4h',
-                    'strength': strength,
-                    'volume': 0,
-                    'description': f'🟡 S4h ({strength:.2f})',
-                    'color': '#FFFF00',
-                    'width': 1 + (strength * 2),
-                    'dash': 'dash',
-                    'distance_pct': abs(price - current_price) / current_price * 100
-                })
-            
-            for price, strength in resistance_levels[:3]:
-                yellow_zones.append({
-                    'price': price,
-                    'type': 'resistance_zone_4h',
-                    'strength': strength,
-                    'volume': 0,
-                    'description': f'🟡 R4h ({strength:.2f})',
-                    'color': '#FFFF00',
-                    'width': 1 + (strength * 2),
-                    'dash': 'dash',
-                    'distance_pct': abs(price - current_price) / current_price * 100
-                })
+            if len(df) >= 100:
+                high_idx = argrelextrema(df['high'].values, np.greater, order=15)[0]
+                low_idx = argrelextrema(df['low'].values, np.less, order=15)[0]
+                
+                support_levels = []
+                for idx in low_idx[-8:]:
+                    price = df['low'].iloc[idx]
+                    distance_pct = abs(price - current_price) / current_price * 100
+                    if distance_pct <= 8:
+                        touches = 0
+                        for i in range(max(0, idx-3), min(len(df), idx+3)):
+                            if abs(df['low'].iloc[i] - price) <= price * 0.008:
+                                touches += 1
+                        
+                        strength = min(touches / 3, 1.0)
+                        support_levels.append((price, strength))
+                
+                resistance_levels = []
+                for idx in high_idx[-8:]:
+                    price = df['high'].iloc[idx]
+                    distance_pct = abs(price - current_price) / current_price * 100
+                    if distance_pct <= 8:
+                        touches = 0
+                        for i in range(max(0, idx-3), min(len(df), idx+3)):
+                            if abs(df['high'].iloc[i] - price) <= price * 0.008:
+                                touches += 1
+                        
+                        strength = min(touches / 3, 1.0)
+                        resistance_levels.append((price, strength))
+                
+                for price, strength in support_levels[:3]:
+                    yellow_zones.append({
+                        'price': price,
+                        'type': 'support_zone_4h',
+                        'strength': strength,
+                        'description': f'🟡 S4h ({strength:.2f})',
+                        'color': '#FFFF00',
+                        'width': 1 + (strength * 2),
+                        'dash': 'dash',
+                        'distance_pct': abs(price - current_price) / current_price * 100
+                    })
+                
+                for price, strength in resistance_levels[:3]:
+                    yellow_zones.append({
+                        'price': price,
+                        'type': 'resistance_zone_4h',
+                        'strength': strength,
+                        'description': f'🟡 R4h ({strength:.2f})',
+                        'color': '#FFFF00',
+                        'width': 1 + (strength * 2),
+                        'dash': 'dash',
+                        'distance_pct': abs(price - current_price) / current_price * 100
+                    })
+        except Exception as e:
+            pass
         
         yellow_zones.sort(key=lambda x: x['strength'], reverse=True)
         self.yellow_liquidation_zones_4h[symbol] = yellow_zones[:5]
     
-    def calculate_blue_liquidity_lines(self, df_1h, df_4h, current_price, symbol):
+    # ======================
+    # Blue Liquidity Lines
+    # ======================
+    def calculate_blue_liquidity_lines(self, df_1h, current_price, symbol):
         blue_lines = []
         
         if df_1h is None or len(df_1h) < 50:
             self.blue_liquidity_lines[symbol] = blue_lines
             return
         
-        for i in range(max(0, len(df_1h)-20), len(df_1h)-1):
-            candle = df_1h.iloc[i]
-            next_candle = df_1h.iloc[i+1]
-            
-            upper_wick = candle['high'] - max(candle['open'], candle['close'])
-            lower_wick = min(candle['open'], candle['close']) - candle['low']
-            body_size = abs(candle['close'] - candle['open'])
-            total_range = candle['high'] - candle['low']
-            
-            if total_range == 0:
-                continue
-            
-            if (lower_wick > body_size * 2 and 
-                upper_wick < body_size * 0.5 and
-                next_candle['close'] > candle['close']):
+        try:
+            for i in range(max(0, len(df_1h)-20), len(df_1h)-1):
+                candle = df_1h.iloc[i]
+                next_candle = df_1h.iloc[i+1]
                 
-                blue_lines.append({
-                    'price': candle['low'],
-                    'type': 'buy_liquidity',
-                    'strength': min(0.8 + (lower_wick/total_range), 0.95),
-                    'timeframe': 'immediate',
-                    'description': '🔵 B',
-                    'color': '#1E90FF',
-                    'width': 2 + (lower_wick/total_range * 3),
-                    'dash': 'solid',
-                    'wick_ratio': lower_wick/total_range
-                })
-            
-            if (upper_wick > body_size * 2 and 
-                lower_wick < body_size * 0.5 and
-                next_candle['close'] < candle['close']):
+                upper_wick = candle['high'] - max(candle['open'], candle['close'])
+                lower_wick = min(candle['open'], candle['close']) - candle['low']
+                body_size = abs(candle['close'] - candle['open'])
+                total_range = candle['high'] - candle['low']
                 
-                blue_lines.append({
-                    'price': candle['high'],
-                    'type': 'sell_liquidity',
-                    'strength': min(0.8 + (upper_wick/total_range), 0.95),
-                    'timeframe': 'immediate',
-                    'description': '🔵 S',
-                    'color': '#1E90FF',
-                    'width': 2 + (upper_wick/total_range * 3),
-                    'dash': 'solid',
-                    'wick_ratio': upper_wick/total_range
-                })
-            
-            if (body_size / total_range < 0.1 and
-                max(upper_wick, lower_wick) > body_size * 3):
+                if total_range == 0:
+                    continue
                 
-                if next_candle['close'] > candle['close']:
+                if (lower_wick > body_size * 2 and 
+                    upper_wick < body_size * 0.5 and
+                    next_candle['close'] > candle['close']):
+                    
                     blue_lines.append({
                         'price': candle['low'],
                         'type': 'buy_liquidity',
-                        'strength': 0.6,
+                        'strength': min(0.8 + (lower_wick/total_range), 0.95),
                         'timeframe': 'immediate',
-                        'description': '🔵 D',
+                        'description': '🔵 B',
                         'color': '#1E90FF',
-                        'width': 1.5,
-                        'dash': 'dot'
+                        'width': 2 + (lower_wick/total_range * 3),
+                        'dash': 'solid'
                     })
-                else:
+                
+                if (upper_wick > body_size * 2 and 
+                    lower_wick < body_size * 0.5 and
+                    next_candle['close'] < candle['close']):
+                    
                     blue_lines.append({
                         'price': candle['high'],
                         'type': 'sell_liquidity',
-                        'strength': 0.6,
+                        'strength': min(0.8 + (upper_wick/total_range), 0.95),
                         'timeframe': 'immediate',
-                        'description': '🔵 D',
+                        'description': '🔵 S',
                         'color': '#1E90FF',
-                        'width': 1.5,
-                        'dash': 'dot'
+                        'width': 2 + (upper_wick/total_range * 3),
+                        'dash': 'solid'
                     })
-        
-        lookback = min(50, len(df_1h))
-        price_tolerance = current_price * 0.02
-        
-        local_highs = []
-        for i in range(1, lookback-1):
-            if (df_1h['high'].iloc[i] > df_1h['high'].iloc[i-1] and 
-                df_1h['high'].iloc[i] > df_1h['high'].iloc[i+1]):
-                local_highs.append(df_1h['high'].iloc[i])
-        
-        local_lows = []
-        for i in range(1, lookback-1):
-            if (df_1h['low'].iloc[i] < df_1h['low'].iloc[i-1] and 
-                df_1h['low'].iloc[i] < df_1h['low'].iloc[i+1]):
-                local_lows.append(df_1h['low'].iloc[i])
-        
-        for high_price in local_highs[:5]:
-            if abs(high_price - current_price) <= price_tolerance:
-                blue_lines.append({
-                    'price': high_price,
-                    'type': 'sell_liquidity',
-                    'strength': 0.7,
-                    'timeframe': 'near',
-                    'description': '🔵 R',
-                    'color': '#00BFFF',
-                    'width': 2,
-                    'dash': 'dash'
-                })
-        
-        for low_price in local_lows[:5]:
-            if abs(low_price - current_price) <= price_tolerance:
-                blue_lines.append({
-                    'price': low_price,
-                    'type': 'buy_liquidity',
-                    'strength': 0.7,
-                    'timeframe': 'near',
-                    'description': '🔵 S',
-                    'color': '#00BFFF',
-                    'width': 2,
-                    'dash': 'dash'
-                })
+            
+            lookback = min(50, len(df_1h))
+            price_tolerance = current_price * 0.02
+            
+            local_highs = []
+            for i in range(1, lookback-1):
+                if (df_1h['high'].iloc[i] > df_1h['high'].iloc[i-1] and 
+                    df_1h['high'].iloc[i] > df_1h['high'].iloc[i+1]):
+                    local_highs.append(df_1h['high'].iloc[i])
+            
+            local_lows = []
+            for i in range(1, lookback-1):
+                if (df_1h['low'].iloc[i] < df_1h['low'].iloc[i-1] and 
+                    df_1h['low'].iloc[i] < df_1h['low'].iloc[i+1]):
+                    local_lows.append(df_1h['low'].iloc[i])
+            
+            for high_price in local_highs[:5]:
+                if abs(high_price - current_price) <= price_tolerance:
+                    blue_lines.append({
+                        'price': high_price,
+                        'type': 'sell_liquidity',
+                        'strength': 0.7,
+                        'timeframe': 'near',
+                        'description': '🔵 R',
+                        'color': '#00BFFF',
+                        'width': 2,
+                        'dash': 'dash'
+                    })
+            
+            for low_price in local_lows[:5]:
+                if abs(low_price - current_price) <= price_tolerance:
+                    blue_lines.append({
+                        'price': low_price,
+                        'type': 'buy_liquidity',
+                        'strength': 0.7,
+                        'timeframe': 'near',
+                        'description': '🔵 S',
+                        'color': '#00BFFF',
+                        'width': 2,
+                        'dash': 'dash'
+                    })
+        except Exception as e:
+            pass
         
         unique_lines = []
         seen_prices = set()
@@ -1625,90 +1582,91 @@ class CryptoAnalyzer:
             self.blue_liquidity_lines_15m[symbol] = blue_lines
             return
         
-        for i in range(max(0, len(df_15m)-30), len(df_15m)-1):
-            candle = df_15m.iloc[i]
-            next_candle = df_15m.iloc[i+1]
-            
-            upper_wick = candle['high'] - max(candle['open'], candle['close'])
-            lower_wick = min(candle['open'], candle['close']) - candle['low']
-            body_size = abs(candle['close'] - candle['open'])
-            total_range = candle['high'] - candle['low']
-            
-            if total_range == 0:
-                continue
-            
-            if (lower_wick > body_size * 2 and 
-                upper_wick < body_size * 0.3 and
-                next_candle['close'] > candle['close']):
+        try:
+            for i in range(max(0, len(df_15m)-30), len(df_15m)-1):
+                candle = df_15m.iloc[i]
+                next_candle = df_15m.iloc[i+1]
                 
-                blue_lines.append({
-                    'price': candle['low'],
-                    'type': 'buy_liquidity_15m',
-                    'strength': min(0.8 + (lower_wick/total_range), 0.95),
-                    'timeframe': 'immediate_15m',
-                    'description': '🔵 B15',
-                    'color': '#1E90FF',
-                    'width': 2 + (lower_wick/total_range * 3),
-                    'dash': 'solid',
-                    'wick_ratio': lower_wick/total_range
-                })
-            
-            if (upper_wick > body_size * 2 and 
-                lower_wick < body_size * 0.3 and
-                next_candle['close'] < candle['close']):
+                upper_wick = candle['high'] - max(candle['open'], candle['close'])
+                lower_wick = min(candle['open'], candle['close']) - candle['low']
+                body_size = abs(candle['close'] - candle['open'])
+                total_range = candle['high'] - candle['low']
                 
-                blue_lines.append({
-                    'price': candle['high'],
-                    'type': 'sell_liquidity_15m',
-                    'strength': min(0.8 + (upper_wick/total_range), 0.95),
-                    'timeframe': 'immediate_15m',
-                    'description': '🔵 S15',
-                    'color': '#1E90FF',
-                    'width': 2 + (upper_wick/total_range * 3),
-                    'dash': 'solid',
-                    'wick_ratio': upper_wick/total_range
-                })
-        
-        lookback = min(80, len(df_15m))
-        price_tolerance = current_price * 0.01
-        
-        local_highs = []
-        for i in range(1, lookback-1):
-            if (df_15m['high'].iloc[i] > df_15m['high'].iloc[i-1] and 
-                df_15m['high'].iloc[i] > df_15m['high'].iloc[i+1]):
-                local_highs.append(df_15m['high'].iloc[i])
-        
-        local_lows = []
-        for i in range(1, lookback-1):
-            if (df_15m['low'].iloc[i] < df_15m['low'].iloc[i-1] and 
-                df_15m['low'].iloc[i] < df_15m['low'].iloc[i+1]):
-                local_lows.append(df_15m['low'].iloc[i])
-        
-        for high_price in local_highs[:8]:
-            if abs(high_price - current_price) <= price_tolerance:
-                blue_lines.append({
-                    'price': high_price,
-                    'type': 'sell_liquidity_15m',
-                    'strength': 0.7,
-                    'timeframe': 'near_15m',
-                    'description': '🔵 R15',
-                    'color': '#00BFFF',
-                    'width': 2,
-                    'dash': 'dash'
-                })
-        
-        for low_price in local_lows[:8]:
-            if abs(low_price - current_price) <= price_tolerance:
-                blue_lines.append({
-                    'price': low_price,
-                    'type': 'buy_liquidity_15m',
-                    'strength': 0.7,
-                    'timeframe': 'near_15m',
-                    'description': '🔵 S15',
-                    'color': '#00BFFF',
-                    'width': 2,
-                    'dash': 'dash'
-                })
+                if total_range == 0:
+                    continue
+                
+                if (lower_wick > body_size * 2 and 
+                    upper_wick < body_size * 0.3 and
+                    next_candle['close'] > candle['close']):
+                    
+                    blue_lines.append({
+                        'price': candle['low'],
+                        'type': 'buy_liquidity_15m',
+                        'strength': min(0.8 + (lower_wick/total_range), 0.95),
+                        'timeframe': 'immediate_15m',
+                        'description': '🔵 B15',
+                        'color': '#1E90FF',
+                        'width': 2 + (lower_wick/total_range * 3),
+                        'dash': 'solid'
+                    })
+                
+                if (upper_wick > body_size * 2 and 
+                    lower_wick < body_size * 0.3 and
+                    next_candle['close'] < candle['close']):
+                    
+                    blue_lines.append({
+                        'price': candle['high'],
+                        'type': 'sell_liquidity_15m',
+                        'strength': min(0.8 + (upper_wick/total_range), 0.95),
+                        'timeframe': 'immediate_15m',
+                        'description': '🔵 S15',
+                        'color': '#1E90FF',
+                        'width': 2 + (upper_wick/total_range * 3),
+                        'dash': 'solid'
+                    })
+            
+            lookback = min(80, len(df_15m))
+            price_tolerance = current_price * 0.01
+            
+            local_highs = []
+            for i in range(1, lookback-1):
+                if (df_15m['high'].iloc[i] > df_15m['high'].iloc[i-1] and 
+                    df_15m['high'].iloc[i] > df_15m['high'].iloc[i+1]):
+                    local_highs.append(df_15m['high'].iloc[i])
+            
+            local_lows = []
+            for i in range(1, lookback-1):
+                if (df_15m['low'].iloc[i] < df_15m['low'].iloc[i-1] and 
+                    df_15m['low'].iloc[i] < df_15m['low'].iloc[i+1]):
+                    local_lows.append(df_15m['low'].iloc[i])
+            
+            for high_price in local_highs[:8]:
+                if abs(high_price - current_price) <= price_tolerance:
+                    blue_lines.append({
+                        'price': high_price,
+                        'type': 'sell_liquidity_15m',
+                        'strength': 0.7,
+                        'timeframe': 'near_15m',
+                        'description': '🔵 R15',
+                        'color': '#00BFFF',
+                        'width': 2,
+                        'dash': 'dash'
+                    })
+            
+            for low_price in local_lows[:8]:
+                if abs(low_price - current_price) <= price_tolerance:
+                    blue_lines.append({
+                        'price': low_price,
+                        'type': 'buy_liquidity_15m',
+                        'strength': 0.7,
+                        'timeframe': 'near_15m',
+                        'description': '🔵 S15',
+                        'color': '#00BFFF',
+                        'width': 2,
+                        'dash': 'dash'
+                    })
+        except Exception as e:
+            pass
         
         unique_lines = []
         seen_prices = set()
@@ -1726,120 +1684,95 @@ class CryptoAnalyzer:
             self.blue_liquidity_lines_5m[symbol] = blue_lines
             return
         
-        for i in range(max(0, len(df_5m)-40), len(df_5m)-1):
-            candle = df_5m.iloc[i]
-            next_candle = df_5m.iloc[i+1]
-            
-            upper_wick = candle['high'] - max(candle['open'], candle['close'])
-            lower_wick = min(candle['open'], candle['close']) - candle['low']
-            body_size = abs(candle['close'] - candle['open'])
-            total_range = candle['high'] - candle['low']
-            
-            if total_range == 0:
-                continue
-            
-            if (lower_wick > body_size * 1.8 and 
-                upper_wick < body_size * 0.4 and
-                next_candle['close'] > candle['close']):
+        try:
+            for i in range(max(0, len(df_5m)-40), len(df_5m)-1):
+                candle = df_5m.iloc[i]
+                next_candle = df_5m.iloc[i+1]
                 
-                blue_lines.append({
-                    'price': candle['low'],
-                    'type': 'buy_liquidity_5m',
-                    'strength': min(0.8 + (lower_wick/total_range), 0.95),
-                    'timeframe': 'immediate_5m',
-                    'description': '🔵 B5',
-                    'color': '#1E90FF',
-                    'width': 2 + (lower_wick/total_range * 3),
-                    'dash': 'solid',
-                    'wick_ratio': lower_wick/total_range
-                })
-            
-            if (upper_wick > body_size * 1.8 and 
-                lower_wick < body_size * 0.4 and
-                next_candle['close'] < candle['close']):
+                upper_wick = candle['high'] - max(candle['open'], candle['close'])
+                lower_wick = min(candle['open'], candle['close']) - candle['low']
+                body_size = abs(candle['close'] - candle['open'])
+                total_range = candle['high'] - candle['low']
                 
-                blue_lines.append({
-                    'price': candle['high'],
-                    'type': 'sell_liquidity_5m',
-                    'strength': min(0.8 + (upper_wick/total_range), 0.95),
-                    'timeframe': 'immediate_5m',
-                    'description': '🔵 S5',
-                    'color': '#1E90FF',
-                    'width': 2 + (upper_wick/total_range * 3),
-                    'dash': 'solid',
-                    'wick_ratio': upper_wick/total_range
-                })
-            
-            if (body_size / total_range < 0.15 and
-                max(upper_wick, lower_wick) > body_size * 2):
+                if total_range == 0:
+                    continue
                 
-                if next_candle['close'] > candle['close']:
+                if (lower_wick > body_size * 1.8 and 
+                    upper_wick < body_size * 0.4 and
+                    next_candle['close'] > candle['close']):
+                    
                     blue_lines.append({
                         'price': candle['low'],
                         'type': 'buy_liquidity_5m',
-                        'strength': 0.6,
+                        'strength': min(0.8 + (lower_wick/total_range), 0.95),
                         'timeframe': 'immediate_5m',
-                        'description': '🔵 D5',
+                        'description': '🔵 B5',
                         'color': '#1E90FF',
-                        'width': 1.5,
-                        'dash': 'dot'
+                        'width': 2 + (lower_wick/total_range * 3),
+                        'dash': 'solid'
                     })
-                else:
+                
+                if (upper_wick > body_size * 1.8 and 
+                    lower_wick < body_size * 0.4 and
+                    next_candle['close'] < candle['close']):
+                    
                     blue_lines.append({
                         'price': candle['high'],
                         'type': 'sell_liquidity_5m',
-                        'strength': 0.6,
+                        'strength': min(0.8 + (upper_wick/total_range), 0.95),
                         'timeframe': 'immediate_5m',
-                        'description': '🔵 D5',
+                        'description': '🔵 S5',
                         'color': '#1E90FF',
-                        'width': 1.5,
-                        'dash': 'dot'
+                        'width': 2 + (upper_wick/total_range * 3),
+                        'dash': 'solid'
                     })
-        
-        lookback = min(100, len(df_5m))
-        price_tolerance = current_price * 0.005
-        
-        local_highs = []
-        for i in range(2, lookback-2):
-            if (df_5m['high'].iloc[i] > df_5m['high'].iloc[i-1] and 
-                df_5m['high'].iloc[i] > df_5m['high'].iloc[i-2] and
-                df_5m['high'].iloc[i] > df_5m['high'].iloc[i+1] and
-                df_5m['high'].iloc[i] > df_5m['high'].iloc[i+2]):
-                local_highs.append(df_5m['high'].iloc[i])
-        
-        local_lows = []
-        for i in range(2, lookback-2):
-            if (df_5m['low'].iloc[i] < df_5m['low'].iloc[i-1] and 
-                df_5m['low'].iloc[i] < df_5m['low'].iloc[i-2] and
-                df_5m['low'].iloc[i] < df_5m['low'].iloc[i+1] and
-                df_5m['low'].iloc[i] < df_5m['low'].iloc[i+2]):
-                local_lows.append(df_5m['low'].iloc[i])
-        
-        for high_price in local_highs[:10]:
-            if abs(high_price - current_price) <= price_tolerance:
-                blue_lines.append({
-                    'price': high_price,
-                    'type': 'sell_liquidity_5m',
-                    'strength': 0.7,
-                    'timeframe': 'near_5m',
-                    'description': '🔵 R5',
-                    'color': '#00BFFF',
-                    'width': 2,
-                    'dash': 'dash'
-                })
-        
-        for low_price in local_lows[:10]:
-            if abs(low_price - current_price) <= price_tolerance:
-                blue_lines.append({
-                    'price': low_price,
-                    'type': 'buy_liquidity_5m',
-                    'strength': 0.7,
-                    'timeframe': 'near_5m',
-                    'description': '🔵 S5',
-                    'color': '#00BFFF',
-                    'width': 2,
-                    'dash': 'dash'
-                })
+            
+            lookback = min(100, len(df_5m))
+            price_tolerance = current_price * 0.005
+            
+            local_highs = []
+            for i in range(2, lookback-2):
+                if (df_5m['high'].iloc[i] > df_5m['high'].iloc[i-1] and 
+                    df_5m['high'].iloc[i] > df_5m['high'].iloc[i-2] and
+                    df_5m['high'].iloc[i] > df_5m['high'].iloc[i+1] and
+                    df_5m['high'].iloc[i] > df_5m['high'].iloc[i+2]):
+                    local_highs.append(df_5m['high'].iloc[i])
+            
+            local_lows = []
+            for i in range(2, lookback-2):
+                if (df_5m['low'].iloc[i] < df_5m['low'].iloc[i-1] and 
+                    df_5m['low'].iloc[i] < df_5m['low'].iloc[i-2] and
+                    df_5m['low'].iloc[i] < df_5m['low'].iloc[i+1] and
+                    df_5m['low'].iloc[i] < df_5m['low'].iloc[i+2]):
+                    local_lows.append(df_5m['low'].iloc[i])
+            
+            for high_price in local_highs[:10]:
+                if abs(high_price - current_price) <= price_tolerance:
+                    blue_lines.append({
+                        'price': high_price,
+                        'type': 'sell_liquidity_5m',
+                        'strength': 0.7,
+                        'timeframe': 'near_5m',
+                        'description': '🔵 R5',
+                        'color': '#00BFFF',
+                        'width': 2,
+                        'dash': 'dash'
+                    })
+            
+            for low_price in local_lows[:10]:
+                if abs(low_price - current_price) <= price_tolerance:
+                    blue_lines.append({
+                        'price': low_price,
+                        'type': 'buy_liquidity_5m',
+                        'strength': 0.7,
+                        'timeframe': 'near_5m',
+                        'description': '🔵 S5',
+                        'color': '#00BFFF',
+                        'width': 2,
+                        'dash': 'dash'
+                    })
+        except Exception as e:
+            pass
         
         unique_lines = []
         seen_prices = set()
@@ -1857,116 +1790,91 @@ class CryptoAnalyzer:
             self.blue_liquidity_lines_1m[symbol] = blue_lines
             return
         
-        for i in range(max(0, len(df_1m)-50), len(df_1m)-1):
-            candle = df_1m.iloc[i]
-            next_candle = df_1m.iloc[i+1]
-            
-            upper_wick = candle['high'] - max(candle['open'], candle['close'])
-            lower_wick = min(candle['open'], candle['close']) - candle['low']
-            body_size = abs(candle['close'] - candle['open'])
-            total_range = candle['high'] - candle['low']
-            
-            if total_range == 0:
-                continue
-            
-            if (lower_wick > body_size * 1.5 and 
-                upper_wick < body_size * 0.5 and
-                next_candle['close'] > candle['close']):
+        try:
+            for i in range(max(0, len(df_1m)-50), len(df_1m)-1):
+                candle = df_1m.iloc[i]
+                next_candle = df_1m.iloc[i+1]
                 
-                blue_lines.append({
-                    'price': candle['low'],
-                    'type': 'buy_liquidity_1m',
-                    'strength': min(0.7 + (lower_wick/total_range), 0.9),
-                    'timeframe': 'immediate_1m',
-                    'description': '🔵 B1',
-                    'color': '#1E90FF',
-                    'width': 1.5 + (lower_wick/total_range * 2),
-                    'dash': 'solid',
-                    'wick_ratio': lower_wick/total_range
-                })
-            
-            if (upper_wick > body_size * 1.5 and 
-                lower_wick < body_size * 0.5 and
-                next_candle['close'] < candle['close']):
+                upper_wick = candle['high'] - max(candle['open'], candle['close'])
+                lower_wick = min(candle['open'], candle['close']) - candle['low']
+                body_size = abs(candle['close'] - candle['open'])
+                total_range = candle['high'] - candle['low']
                 
-                blue_lines.append({
-                    'price': candle['high'],
-                    'type': 'sell_liquidity_1m',
-                    'strength': min(0.7 + (upper_wick/total_range), 0.9),
-                    'timeframe': 'immediate_1m',
-                    'description': '🔵 S1',
-                    'color': '#1E90FF',
-                    'width': 1.5 + (upper_wick/total_range * 2),
-                    'dash': 'solid',
-                    'wick_ratio': upper_wick/total_range
-                })
-            
-            if (body_size / total_range < 0.2 and
-                max(upper_wick, lower_wick) > body_size * 1.5):
+                if total_range == 0:
+                    continue
                 
-                if next_candle['close'] > candle['close']:
+                if (lower_wick > body_size * 1.5 and 
+                    upper_wick < body_size * 0.5 and
+                    next_candle['close'] > candle['close']):
+                    
                     blue_lines.append({
                         'price': candle['low'],
                         'type': 'buy_liquidity_1m',
-                        'strength': 0.55,
+                        'strength': min(0.7 + (lower_wick/total_range), 0.9),
                         'timeframe': 'immediate_1m',
-                        'description': '🔵 D1',
+                        'description': '🔵 B1',
                         'color': '#1E90FF',
-                        'width': 1.2,
-                        'dash': 'dot'
+                        'width': 1.5 + (lower_wick/total_range * 2),
+                        'dash': 'solid'
                     })
-                else:
+                
+                if (upper_wick > body_size * 1.5 and 
+                    lower_wick < body_size * 0.5 and
+                    next_candle['close'] < candle['close']):
+                    
                     blue_lines.append({
                         'price': candle['high'],
                         'type': 'sell_liquidity_1m',
-                        'strength': 0.55,
+                        'strength': min(0.7 + (upper_wick/total_range), 0.9),
                         'timeframe': 'immediate_1m',
-                        'description': '🔵 D1',
+                        'description': '🔵 S1',
                         'color': '#1E90FF',
-                        'width': 1.2,
-                        'dash': 'dot'
+                        'width': 1.5 + (upper_wick/total_range * 2),
+                        'dash': 'solid'
                     })
-        
-        lookback = min(120, len(df_1m))
-        price_tolerance = current_price * 0.0025
-        
-        local_highs = []
-        for i in range(2, lookback-2):
-            if (df_1m['high'].iloc[i] > df_1m['high'].iloc[i-1] and 
-                df_1m['high'].iloc[i] > df_1m['high'].iloc[i+1]):
-                local_highs.append(df_1m['high'].iloc[i])
-        
-        local_lows = []
-        for i in range(2, lookback-2):
-            if (df_1m['low'].iloc[i] < df_1m['low'].iloc[i-1] and 
-                df_1m['low'].iloc[i] < df_1m['low'].iloc[i+1]):
-                local_lows.append(df_1m['low'].iloc[i])
-        
-        for high_price in local_highs[:12]:
-            if abs(high_price - current_price) <= price_tolerance:
-                blue_lines.append({
-                    'price': high_price,
-                    'type': 'sell_liquidity_1m',
-                    'strength': 0.65,
-                    'timeframe': 'near_1m',
-                    'description': '🔵 R1',
-                    'color': '#00BFFF',
-                    'width': 1.8,
-                    'dash': 'dash'
-                })
-        
-        for low_price in local_lows[:12]:
-            if abs(low_price - current_price) <= price_tolerance:
-                blue_lines.append({
-                    'price': low_price,
-                    'type': 'buy_liquidity_1m',
-                    'strength': 0.65,
-                    'timeframe': 'near_1m',
-                    'description': '🔵 S1',
-                    'color': '#00BFFF',
-                    'width': 1.8,
-                    'dash': 'dash'
-                })
+            
+            lookback = min(120, len(df_1m))
+            price_tolerance = current_price * 0.0025
+            
+            local_highs = []
+            for i in range(2, lookback-2):
+                if (df_1m['high'].iloc[i] > df_1m['high'].iloc[i-1] and 
+                    df_1m['high'].iloc[i] > df_1m['high'].iloc[i+1]):
+                    local_highs.append(df_1m['high'].iloc[i])
+            
+            local_lows = []
+            for i in range(2, lookback-2):
+                if (df_1m['low'].iloc[i] < df_1m['low'].iloc[i-1] and 
+                    df_1m['low'].iloc[i] < df_1m['low'].iloc[i+1]):
+                    local_lows.append(df_1m['low'].iloc[i])
+            
+            for high_price in local_highs[:12]:
+                if abs(high_price - current_price) <= price_tolerance:
+                    blue_lines.append({
+                        'price': high_price,
+                        'type': 'sell_liquidity_1m',
+                        'strength': 0.65,
+                        'timeframe': 'near_1m',
+                        'description': '🔵 R1',
+                        'color': '#00BFFF',
+                        'width': 1.8,
+                        'dash': 'dash'
+                    })
+            
+            for low_price in local_lows[:12]:
+                if abs(low_price - current_price) <= price_tolerance:
+                    blue_lines.append({
+                        'price': low_price,
+                        'type': 'buy_liquidity_1m',
+                        'strength': 0.65,
+                        'timeframe': 'near_1m',
+                        'description': '🔵 S1',
+                        'color': '#00BFFF',
+                        'width': 1.8,
+                        'dash': 'dash'
+                    })
+        except Exception as e:
+            pass
         
         unique_lines = []
         seen_prices = set()
@@ -1984,90 +1892,91 @@ class CryptoAnalyzer:
             self.blue_liquidity_lines_4h[symbol] = blue_lines
             return
         
-        for i in range(max(0, len(df_4h)-15), len(df_4h)-1):
-            candle = df_4h.iloc[i]
-            next_candle = df_4h.iloc[i+1]
-            
-            upper_wick = candle['high'] - max(candle['open'], candle['close'])
-            lower_wick = min(candle['open'], candle['close']) - candle['low']
-            body_size = abs(candle['close'] - candle['open'])
-            total_range = candle['high'] - candle['low']
-            
-            if total_range == 0:
-                continue
-            
-            if (lower_wick > body_size * 2 and 
-                upper_wick < body_size * 0.5 and
-                next_candle['close'] > candle['close']):
+        try:
+            for i in range(max(0, len(df_4h)-15), len(df_4h)-1):
+                candle = df_4h.iloc[i]
+                next_candle = df_4h.iloc[i+1]
                 
-                blue_lines.append({
-                    'price': candle['low'],
-                    'type': 'buy_liquidity_4h',
-                    'strength': min(0.8 + (lower_wick/total_range), 0.95),
-                    'timeframe': 'immediate_4h',
-                    'description': '🔵 B4h',
-                    'color': '#1E90FF',
-                    'width': 2 + (lower_wick/total_range * 3),
-                    'dash': 'solid',
-                    'wick_ratio': lower_wick/total_range
-                })
-            
-            if (upper_wick > body_size * 2 and 
-                lower_wick < body_size * 0.5 and
-                next_candle['close'] < candle['close']):
+                upper_wick = candle['high'] - max(candle['open'], candle['close'])
+                lower_wick = min(candle['open'], candle['close']) - candle['low']
+                body_size = abs(candle['close'] - candle['open'])
+                total_range = candle['high'] - candle['low']
                 
-                blue_lines.append({
-                    'price': candle['high'],
-                    'type': 'sell_liquidity_4h',
-                    'strength': min(0.8 + (upper_wick/total_range), 0.95),
-                    'timeframe': 'immediate_4h',
-                    'description': '🔵 S4h',
-                    'color': '#1E90FF',
-                    'width': 2 + (upper_wick/total_range * 3),
-                    'dash': 'solid',
-                    'wick_ratio': upper_wick/total_range
-                })
-        
-        lookback = min(30, len(df_4h))
-        price_tolerance = current_price * 0.03
-        
-        local_highs = []
-        for i in range(1, lookback-1):
-            if (df_4h['high'].iloc[i] > df_4h['high'].iloc[i-1] and 
-                df_4h['high'].iloc[i] > df_4h['high'].iloc[i+1]):
-                local_highs.append(df_4h['high'].iloc[i])
-        
-        local_lows = []
-        for i in range(1, lookback-1):
-            if (df_4h['low'].iloc[i] < df_4h['low'].iloc[i-1] and 
-                df_4h['low'].iloc[i] < df_4h['low'].iloc[i+1]):
-                local_lows.append(df_4h['low'].iloc[i])
-        
-        for high_price in local_highs[:5]:
-            if abs(high_price - current_price) <= price_tolerance:
-                blue_lines.append({
-                    'price': high_price,
-                    'type': 'sell_liquidity_4h',
-                    'strength': 0.7,
-                    'timeframe': 'near_4h',
-                    'description': '🔵 R4h',
-                    'color': '#00BFFF',
-                    'width': 2,
-                    'dash': 'dash'
-                })
-        
-        for low_price in local_lows[:5]:
-            if abs(low_price - current_price) <= price_tolerance:
-                blue_lines.append({
-                    'price': low_price,
-                    'type': 'buy_liquidity_4h',
-                    'strength': 0.7,
-                    'timeframe': 'near_4h',
-                    'description': '🔵 S4h',
-                    'color': '#00BFFF',
-                    'width': 2,
-                    'dash': 'dash'
-                })
+                if total_range == 0:
+                    continue
+                
+                if (lower_wick > body_size * 2 and 
+                    upper_wick < body_size * 0.5 and
+                    next_candle['close'] > candle['close']):
+                    
+                    blue_lines.append({
+                        'price': candle['low'],
+                        'type': 'buy_liquidity_4h',
+                        'strength': min(0.8 + (lower_wick/total_range), 0.95),
+                        'timeframe': 'immediate_4h',
+                        'description': '🔵 B4h',
+                        'color': '#1E90FF',
+                        'width': 2 + (lower_wick/total_range * 3),
+                        'dash': 'solid'
+                    })
+                
+                if (upper_wick > body_size * 2 and 
+                    lower_wick < body_size * 0.5 and
+                    next_candle['close'] < candle['close']):
+                    
+                    blue_lines.append({
+                        'price': candle['high'],
+                        'type': 'sell_liquidity_4h',
+                        'strength': min(0.8 + (upper_wick/total_range), 0.95),
+                        'timeframe': 'immediate_4h',
+                        'description': '🔵 S4h',
+                        'color': '#1E90FF',
+                        'width': 2 + (upper_wick/total_range * 3),
+                        'dash': 'solid'
+                    })
+            
+            lookback = min(30, len(df_4h))
+            price_tolerance = current_price * 0.03
+            
+            local_highs = []
+            for i in range(1, lookback-1):
+                if (df_4h['high'].iloc[i] > df_4h['high'].iloc[i-1] and 
+                    df_4h['high'].iloc[i] > df_4h['high'].iloc[i+1]):
+                    local_highs.append(df_4h['high'].iloc[i])
+            
+            local_lows = []
+            for i in range(1, lookback-1):
+                if (df_4h['low'].iloc[i] < df_4h['low'].iloc[i-1] and 
+                    df_4h['low'].iloc[i] < df_4h['low'].iloc[i+1]):
+                    local_lows.append(df_4h['low'].iloc[i])
+            
+            for high_price in local_highs[:5]:
+                if abs(high_price - current_price) <= price_tolerance:
+                    blue_lines.append({
+                        'price': high_price,
+                        'type': 'sell_liquidity_4h',
+                        'strength': 0.7,
+                        'timeframe': 'near_4h',
+                        'description': '🔵 R4h',
+                        'color': '#00BFFF',
+                        'width': 2,
+                        'dash': 'dash'
+                    })
+            
+            for low_price in local_lows[:5]:
+                if abs(low_price - current_price) <= price_tolerance:
+                    blue_lines.append({
+                        'price': low_price,
+                        'type': 'buy_liquidity_4h',
+                        'strength': 0.7,
+                        'timeframe': 'near_4h',
+                        'description': '🔵 S4h',
+                        'color': '#00BFFF',
+                        'width': 2,
+                        'dash': 'dash'
+                    })
+        except Exception as e:
+            pass
         
         unique_lines = []
         seen_prices = set()
@@ -2078,42 +1987,48 @@ class CryptoAnalyzer:
         
         self.blue_liquidity_lines_4h[symbol] = unique_lines
     
-    def calculate_white_liquidity_levels(self, df_1h, df_4h, current_price, symbol):
+    # ======================
+    # White Liquidity Levels
+    # ======================
+    def calculate_white_liquidity_levels(self, df_1h, current_price, symbol):
         white_levels = []
         
-        if df_1h is None or df_4h is None:
+        if df_1h is None:
             self.white_liquidity_levels[symbol] = white_levels
             return
         
-        support_4h, resistance_4h = self.find_strong_support_resistance(df_4h, window=12)
-        
-        for price, strength in support_4h[:3]:
-            if strength > 0.7:
-                distance_pct = abs(price - current_price) / current_price * 100
-                if distance_pct <= 5:
-                    white_levels.append({
-                        'price': price,
-                        'type': 'strong_support',
-                        'strength': strength,
-                        'description': f'⚪ S ({strength:.2f})',
-                        'color': 'white',
-                        'width': 1 + (strength * 2),
-                        'dash': 'dash'
-                    })
-        
-        for price, strength in resistance_4h[:3]:
-            if strength > 0.7:
-                distance_pct = abs(price - current_price) / current_price * 100
-                if distance_pct <= 5:
-                    white_levels.append({
-                        'price': price,
-                        'type': 'strong_resistance',
-                        'strength': strength,
-                        'description': f'⚪ R ({strength:.2f})',
-                        'color': 'white',
-                        'width': 1 + (strength * 2),
-                        'dash': 'dash'
-                    })
+        try:
+            support, resistance = self.find_strong_support_resistance(df_1h, window=12)
+            
+            for price, strength in support[:3]:
+                if strength > 0.7:
+                    distance_pct = abs(price - current_price) / current_price * 100
+                    if distance_pct <= 5:
+                        white_levels.append({
+                            'price': price,
+                            'type': 'strong_support',
+                            'strength': strength,
+                            'description': f'⚪ S ({strength:.2f})',
+                            'color': 'white',
+                            'width': 1 + (strength * 2),
+                            'dash': 'dash'
+                        })
+            
+            for price, strength in resistance[:3]:
+                if strength > 0.7:
+                    distance_pct = abs(price - current_price) / current_price * 100
+                    if distance_pct <= 5:
+                        white_levels.append({
+                            'price': price,
+                            'type': 'strong_resistance',
+                            'strength': strength,
+                            'description': f'⚪ R ({strength:.2f})',
+                            'color': 'white',
+                            'width': 1 + (strength * 2),
+                            'dash': 'dash'
+                        })
+        except Exception as e:
+            pass
         
         self.white_liquidity_levels[symbol] = white_levels
     
@@ -2124,35 +2039,38 @@ class CryptoAnalyzer:
             self.white_liquidity_levels_15m[symbol] = white_levels
             return
         
-        support_15m, resistance_15m = self.find_strong_support_resistance_15m(df_15m, window=15)
-        
-        for price, strength in support_15m[:4]:
-            if strength > 0.6:
-                distance_pct = abs(price - current_price) / current_price * 100
-                if distance_pct <= 3:
-                    white_levels.append({
-                        'price': price,
-                        'type': 'strong_support_15m',
-                        'strength': strength,
-                        'description': f'⚪ S15 ({strength:.2f})',
-                        'color': 'white',
-                        'width': 1 + (strength * 2),
-                        'dash': 'dash'
-                    })
-        
-        for price, strength in resistance_15m[:4]:
-            if strength > 0.6:
-                distance_pct = abs(price - current_price) / current_price * 100
-                if distance_pct <= 3:
-                    white_levels.append({
-                        'price': price,
-                        'type': 'strong_resistance_15m',
-                        'strength': strength,
-                        'description': f'⚪ R15 ({strength:.2f})',
-                        'color': 'white',
-                        'width': 1 + (strength * 2),
-                        'dash': 'dash'
-                    })
+        try:
+            support, resistance = self.find_strong_support_resistance_15m(df_15m, window=15)
+            
+            for price, strength in support[:4]:
+                if strength > 0.6:
+                    distance_pct = abs(price - current_price) / current_price * 100
+                    if distance_pct <= 3:
+                        white_levels.append({
+                            'price': price,
+                            'type': 'strong_support_15m',
+                            'strength': strength,
+                            'description': f'⚪ S15 ({strength:.2f})',
+                            'color': 'white',
+                            'width': 1 + (strength * 2),
+                            'dash': 'dash'
+                        })
+            
+            for price, strength in resistance[:4]:
+                if strength > 0.6:
+                    distance_pct = abs(price - current_price) / current_price * 100
+                    if distance_pct <= 3:
+                        white_levels.append({
+                            'price': price,
+                            'type': 'strong_resistance_15m',
+                            'strength': strength,
+                            'description': f'⚪ R15 ({strength:.2f})',
+                            'color': 'white',
+                            'width': 1 + (strength * 2),
+                            'dash': 'dash'
+                        })
+        except Exception as e:
+            pass
         
         self.white_liquidity_levels_15m[symbol] = white_levels
     
@@ -2163,35 +2081,38 @@ class CryptoAnalyzer:
             self.white_liquidity_levels_5m[symbol] = white_levels
             return
         
-        support_5m, resistance_5m = self.find_strong_support_resistance_5m(df_5m, window=10)
-        
-        for price, strength in support_5m[:5]:
-            if strength > 0.55:
-                distance_pct = abs(price - current_price) / current_price * 100
-                if distance_pct <= 2:
-                    white_levels.append({
-                        'price': price,
-                        'type': 'strong_support_5m',
-                        'strength': strength,
-                        'description': f'⚪ S5 ({strength:.2f})',
-                        'color': 'white',
-                        'width': 1 + (strength * 2),
-                        'dash': 'dash'
-                    })
-        
-        for price, strength in resistance_5m[:5]:
-            if strength > 0.55:
-                distance_pct = abs(price - current_price) / current_price * 100
-                if distance_pct <= 2:
-                    white_levels.append({
-                        'price': price,
-                        'type': 'strong_resistance_5m',
-                        'strength': strength,
-                        'description': f'⚪ R5 ({strength:.2f})',
-                        'color': 'white',
-                        'width': 1 + (strength * 2),
-                        'dash': 'dash'
-                    })
+        try:
+            support, resistance = self.find_strong_support_resistance_5m(df_5m, window=10)
+            
+            for price, strength in support[:5]:
+                if strength > 0.55:
+                    distance_pct = abs(price - current_price) / current_price * 100
+                    if distance_pct <= 2:
+                        white_levels.append({
+                            'price': price,
+                            'type': 'strong_support_5m',
+                            'strength': strength,
+                            'description': f'⚪ S5 ({strength:.2f})',
+                            'color': 'white',
+                            'width': 1 + (strength * 2),
+                            'dash': 'dash'
+                        })
+            
+            for price, strength in resistance[:5]:
+                if strength > 0.55:
+                    distance_pct = abs(price - current_price) / current_price * 100
+                    if distance_pct <= 2:
+                        white_levels.append({
+                            'price': price,
+                            'type': 'strong_resistance_5m',
+                            'strength': strength,
+                            'description': f'⚪ R5 ({strength:.2f})',
+                            'color': 'white',
+                            'width': 1 + (strength * 2),
+                            'dash': 'dash'
+                        })
+        except Exception as e:
+            pass
         
         self.white_liquidity_levels_5m[symbol] = white_levels
     
@@ -2202,35 +2123,38 @@ class CryptoAnalyzer:
             self.white_liquidity_levels_1m[symbol] = white_levels
             return
         
-        support_1m, resistance_1m = self.find_strong_support_resistance_1m(df_1m, window=7)
-        
-        for price, strength in support_1m[:6]:
-            if strength > 0.5:
-                distance_pct = abs(price - current_price) / current_price * 100
-                if distance_pct <= 1.5:
-                    white_levels.append({
-                        'price': price,
-                        'type': 'strong_support_1m',
-                        'strength': strength,
-                        'description': f'⚪ S1 ({strength:.2f})',
-                        'color': 'white',
-                        'width': 1 + (strength * 1.5),
-                        'dash': 'dash'
-                    })
-        
-        for price, strength in resistance_1m[:6]:
-            if strength > 0.5:
-                distance_pct = abs(price - current_price) / current_price * 100
-                if distance_pct <= 1.5:
-                    white_levels.append({
-                        'price': price,
-                        'type': 'strong_resistance_1m',
-                        'strength': strength,
-                        'description': f'⚪ R1 ({strength:.2f})',
-                        'color': 'white',
-                        'width': 1 + (strength * 1.5),
-                        'dash': 'dash'
-                    })
+        try:
+            support, resistance = self.find_strong_support_resistance_1m(df_1m, window=7)
+            
+            for price, strength in support[:6]:
+                if strength > 0.5:
+                    distance_pct = abs(price - current_price) / current_price * 100
+                    if distance_pct <= 1.5:
+                        white_levels.append({
+                            'price': price,
+                            'type': 'strong_support_1m',
+                            'strength': strength,
+                            'description': f'⚪ S1 ({strength:.2f})',
+                            'color': 'white',
+                            'width': 1 + (strength * 1.5),
+                            'dash': 'dash'
+                        })
+            
+            for price, strength in resistance[:6]:
+                if strength > 0.5:
+                    distance_pct = abs(price - current_price) / current_price * 100
+                    if distance_pct <= 1.5:
+                        white_levels.append({
+                            'price': price,
+                            'type': 'strong_resistance_1m',
+                            'strength': strength,
+                            'description': f'⚪ R1 ({strength:.2f})',
+                            'color': 'white',
+                            'width': 1 + (strength * 1.5),
+                            'dash': 'dash'
+                        })
+        except Exception as e:
+            pass
         
         self.white_liquidity_levels_1m[symbol] = white_levels
     
@@ -2241,302 +2165,311 @@ class CryptoAnalyzer:
             self.white_liquidity_levels_4h[symbol] = white_levels
             return
         
-        support_4h, resistance_4h = self.find_strong_support_resistance(df_4h, window=20)
-        
-        for price, strength in support_4h[:3]:
-            if strength > 0.7:
-                distance_pct = abs(price - current_price) / current_price * 100
-                if distance_pct <= 8:
-                    white_levels.append({
-                        'price': price,
-                        'type': 'strong_support_4h',
-                        'strength': strength,
-                        'description': f'⚪ S4h ({strength:.2f})',
-                        'color': 'white',
-                        'width': 1 + (strength * 2),
-                        'dash': 'dash'
-                    })
-        
-        for price, strength in resistance_4h[:3]:
-            if strength > 0.7:
-                distance_pct = abs(price - current_price) / current_price * 100
-                if distance_pct <= 8:
-                    white_levels.append({
-                        'price': price,
-                        'type': 'strong_resistance_4h',
-                        'strength': strength,
-                        'description': f'⚪ R4h ({strength:.2f})',
-                        'color': 'white',
-                        'width': 1 + (strength * 2),
-                        'dash': 'dash'
-                    })
+        try:
+            support, resistance = self.find_strong_support_resistance(df_4h, window=20)
+            
+            for price, strength in support[:3]:
+                if strength > 0.7:
+                    distance_pct = abs(price - current_price) / current_price * 100
+                    if distance_pct <= 8:
+                        white_levels.append({
+                            'price': price,
+                            'type': 'strong_support_4h',
+                            'strength': strength,
+                            'description': f'⚪ S4h ({strength:.2f})',
+                            'color': 'white',
+                            'width': 1 + (strength * 2),
+                            'dash': 'dash'
+                        })
+            
+            for price, strength in resistance[:3]:
+                if strength > 0.7:
+                    distance_pct = abs(price - current_price) / current_price * 100
+                    if distance_pct <= 8:
+                        white_levels.append({
+                            'price': price,
+                            'type': 'strong_resistance_4h',
+                            'strength': strength,
+                            'description': f'⚪ R4h ({strength:.2f})',
+                            'color': 'white',
+                            'width': 1 + (strength * 2),
+                            'dash': 'dash'
+                        })
+        except Exception as e:
+            pass
         
         self.white_liquidity_levels_4h[symbol] = white_levels
     
+    # ======================
+    # Find Support/Resistance
+    # ======================
     def find_strong_support_resistance(self, df, window=20):
         if len(df) < window * 2:
             return [], []
         
-        high_idx = argrelextrema(df['high'].values, np.greater, order=window)[0]
-        low_idx = argrelextrema(df['low'].values, np.less, order=window)[0]
-        
-        def cluster_and_score(levels, price_data, is_support=True):
-            if len(levels) == 0:
-                return []
+        try:
+            high_idx = argrelextrema(df['high'].values, np.greater, order=window)[0]
+            low_idx = argrelextrema(df['low'].values, np.less, order=window)[0]
             
-            eps_value = np.std(levels) * 0.5
+            def cluster_and_score(levels, price_data, is_support=True):
+                if len(levels) == 0:
+                    return []
+                
+                eps_value = np.std(levels) * 0.5
+                if eps_value <= 0:
+                    eps_value = np.mean(levels) * 0.005
+                eps_value = max(eps_value, np.mean(levels) * 0.001)
+                
+                levels_array = np.array(levels).reshape(-1, 1)
+                
+                try:
+                    db = DBSCAN(eps=float(eps_value), min_samples=2).fit(levels_array)
+                    labels = db.labels_
+                except Exception as e:
+                    labels = np.zeros(len(levels))
+                
+                clusters = {}
+                for i, label in enumerate(labels):
+                    if label not in clusters:
+                        clusters[label] = []
+                    clusters[label].append(levels[i])
+                
+                scored_clusters = []
+                for label, cluster in clusters.items():
+                    if label != -1:
+                        avg_price = np.mean(cluster)
+                        
+                        if is_support:
+                            touches = len(price_data[
+                                (price_data['low'] <= avg_price * 1.005) & 
+                                (price_data['low'] >= avg_price * 0.995)
+                            ])
+                        else:
+                            touches = len(price_data[
+                                (price_data['high'] >= avg_price * 0.995) & 
+                                (price_data['high'] <= avg_price * 1.005)
+                            ])
+                        
+                        volume_mask = (price_data['close'] >= avg_price * 0.99) & (price_data['close'] <= avg_price * 1.01)
+                        volume_score = price_data.loc[volume_mask, 'volume'].mean() / price_data['volume'].mean() if not price_data['volume'].mean() == 0 else 1
+                        
+                        strength = min((touches * 0.4) + (volume_score * 0.6), 1.0)
+                        scored_clusters.append((avg_price, strength, len(cluster)))
+                
+                scored_clusters.sort(key=lambda x: x[1], reverse=True)
+                return [(price, strength) for price, strength, _ in scored_clusters]
             
-            if eps_value <= 0:
-                eps_value = np.mean(levels) * 0.005
+            support_levels = df.iloc[low_idx]['low'].values if len(low_idx) > 0 else []
+            resistance_levels = df.iloc[high_idx]['high'].values if len(high_idx) > 0 else []
             
-            eps_value = max(eps_value, np.mean(levels) * 0.001)
+            support = cluster_and_score(support_levels, df, is_support=True)
+            resistance = cluster_and_score(resistance_levels, df, is_support=False)
             
-            levels_array = np.array(levels).reshape(-1, 1)
-            
-            try:
-                db = DBSCAN(eps=float(eps_value), min_samples=2).fit(levels_array)
-                labels = db.labels_
-            except Exception as e:
-                print(f"DBSCAN failed: {e}, using simple clustering")
-                labels = np.zeros(len(levels))
-            
-            clusters = {}
-            for i, label in enumerate(labels):
-                if label not in clusters:
-                    clusters[label] = []
-                clusters[label].append(levels[i])
-            
-            scored_clusters = []
-            for label, cluster in clusters.items():
-                if label != -1:
-                    avg_price = np.mean(cluster)
-                    
-                    if is_support:
-                        touches = len(price_data[
-                            (price_data['low'] <= avg_price * 1.005) & 
-                            (price_data['low'] >= avg_price * 0.995)
-                        ])
-                    else:
-                        touches = len(price_data[
-                            (price_data['high'] >= avg_price * 0.995) & 
-                            (price_data['high'] <= avg_price * 1.005)
-                        ])
-                    
-                    volume_mask = (price_data['close'] >= avg_price * 0.99) & (price_data['close'] <= avg_price * 1.01)
-                    volume_score = price_data.loc[volume_mask, 'volume'].mean() / price_data['volume'].mean() if not price_data['volume'].mean() == 0 else 1
-                    
-                    strength = min((touches * 0.4) + (volume_score * 0.6), 1.0)
-                    scored_clusters.append((avg_price, strength, len(cluster)))
-            
-            scored_clusters.sort(key=lambda x: x[1], reverse=True)
-            return [(price, strength) for price, strength, _ in scored_clusters]
-        
-        support_levels = df.iloc[low_idx]['low'].values if len(low_idx) > 0 else []
-        resistance_levels = df.iloc[high_idx]['high'].values if len(high_idx) > 0 else []
-        
-        support = cluster_and_score(support_levels, df, is_support=True)
-        resistance = cluster_and_score(resistance_levels, df, is_support=False)
-        
-        return support[:5], resistance[:5]
+            return support[:5], resistance[:5]
+        except Exception as e:
+            return [], []
     
     def find_strong_support_resistance_15m(self, df, window=15):
         if len(df) < window * 2:
             return [], []
         
-        high_idx = argrelextrema(df['high'].values, np.greater, order=window)[0]
-        low_idx = argrelextrema(df['low'].values, np.less, order=window)[0]
-        
-        def cluster_and_score(levels, price_data, is_support=True):
-            if len(levels) == 0:
-                return []
+        try:
+            high_idx = argrelextrema(df['high'].values, np.greater, order=window)[0]
+            low_idx = argrelextrema(df['low'].values, np.less, order=window)[0]
             
-            eps_value = np.std(levels) * 0.3
+            def cluster_and_score(levels, price_data, is_support=True):
+                if len(levels) == 0:
+                    return []
+                
+                eps_value = np.std(levels) * 0.3
+                if eps_value <= 0:
+                    eps_value = np.mean(levels) * 0.003
+                eps_value = max(eps_value, np.mean(levels) * 0.001)
+                
+                levels_array = np.array(levels).reshape(-1, 1)
+                
+                try:
+                    db = DBSCAN(eps=float(eps_value), min_samples=2).fit(levels_array)
+                    labels = db.labels_
+                except:
+                    labels = np.zeros(len(levels))
+                
+                clusters = {}
+                for i, label in enumerate(labels):
+                    if label not in clusters:
+                        clusters[label] = []
+                    clusters[label].append(levels[i])
+                
+                scored_clusters = []
+                for label, cluster in clusters.items():
+                    if label != -1:
+                        avg_price = np.mean(cluster)
+                        
+                        if is_support:
+                            touches = len(price_data[
+                                (price_data['low'] <= avg_price * 1.003) & 
+                                (price_data['low'] >= avg_price * 0.997)
+                            ])
+                        else:
+                            touches = len(price_data[
+                                (price_data['high'] >= avg_price * 0.997) & 
+                                (price_data['high'] <= avg_price * 1.003)
+                            ])
+                        
+                        volume_mask = (price_data['close'] >= avg_price * 0.995) & (price_data['close'] <= avg_price * 1.005)
+                        volume_score = price_data.loc[volume_mask, 'volume'].mean() / price_data['volume'].mean() if not price_data['volume'].mean() == 0 else 1
+                        
+                        strength = min((touches * 0.4) + (volume_score * 0.6), 1.0)
+                        scored_clusters.append((avg_price, strength, len(cluster)))
+                
+                scored_clusters.sort(key=lambda x: x[1], reverse=True)
+                return [(price, strength) for price, strength, _ in scored_clusters]
             
-            if eps_value <= 0:
-                eps_value = np.mean(levels) * 0.003
+            support_levels = df.iloc[low_idx]['low'].values if len(low_idx) > 0 else []
+            resistance_levels = df.iloc[high_idx]['high'].values if len(high_idx) > 0 else []
             
-            eps_value = max(eps_value, np.mean(levels) * 0.001)
+            support = cluster_and_score(support_levels, df, is_support=True)
+            resistance = cluster_and_score(resistance_levels, df, is_support=False)
             
-            levels_array = np.array(levels).reshape(-1, 1)
-            
-            try:
-                db = DBSCAN(eps=float(eps_value), min_samples=2).fit(levels_array)
-                labels = db.labels_
-            except Exception as e:
-                print(f"DBSCAN failed: {e}, using simple clustering")
-                labels = np.zeros(len(levels))
-            
-            clusters = {}
-            for i, label in enumerate(labels):
-                if label not in clusters:
-                    clusters[label] = []
-                clusters[label].append(levels[i])
-            
-            scored_clusters = []
-            for label, cluster in clusters.items():
-                if label != -1:
-                    avg_price = np.mean(cluster)
-                    
-                    if is_support:
-                        touches = len(price_data[
-                            (price_data['low'] <= avg_price * 1.003) & 
-                            (price_data['low'] >= avg_price * 0.997)
-                        ])
-                    else:
-                        touches = len(price_data[
-                            (price_data['high'] >= avg_price * 0.997) & 
-                            (price_data['high'] <= avg_price * 1.003)
-                        ])
-                    
-                    volume_mask = (price_data['close'] >= avg_price * 0.995) & (price_data['close'] <= avg_price * 1.005)
-                    volume_score = price_data.loc[volume_mask, 'volume'].mean() / price_data['volume'].mean() if not price_data['volume'].mean() == 0 else 1
-                    
-                    strength = min((touches * 0.4) + (volume_score * 0.6), 1.0)
-                    scored_clusters.append((avg_price, strength, len(cluster)))
-            
-            scored_clusters.sort(key=lambda x: x[1], reverse=True)
-            return [(price, strength) for price, strength, _ in scored_clusters]
-        
-        support_levels = df.iloc[low_idx]['low'].values if len(low_idx) > 0 else []
-        resistance_levels = df.iloc[high_idx]['high'].values if len(high_idx) > 0 else []
-        
-        support = cluster_and_score(support_levels, df, is_support=True)
-        resistance = cluster_and_score(resistance_levels, df, is_support=False)
-        
-        return support[:6], resistance[:6]
+            return support[:6], resistance[:6]
+        except Exception as e:
+            return [], []
     
     def find_strong_support_resistance_5m(self, df, window=10):
         if len(df) < window * 2:
             return [], []
         
-        high_idx = argrelextrema(df['high'].values, np.greater, order=window)[0]
-        low_idx = argrelextrema(df['low'].values, np.less, order=window)[0]
-        
-        def cluster_and_score(levels, price_data, is_support=True):
-            if len(levels) == 0:
-                return []
+        try:
+            high_idx = argrelextrema(df['high'].values, np.greater, order=window)[0]
+            low_idx = argrelextrema(df['low'].values, np.less, order=window)[0]
             
-            eps_value = np.std(levels) * 0.2
+            def cluster_and_score(levels, price_data, is_support=True):
+                if len(levels) == 0:
+                    return []
+                
+                eps_value = np.std(levels) * 0.2
+                if eps_value <= 0:
+                    eps_value = np.mean(levels) * 0.002
+                eps_value = max(eps_value, np.mean(levels) * 0.0005)
+                
+                levels_array = np.array(levels).reshape(-1, 1)
+                
+                try:
+                    db = DBSCAN(eps=float(eps_value), min_samples=2).fit(levels_array)
+                    labels = db.labels_
+                except:
+                    labels = np.zeros(len(levels))
+                
+                clusters = {}
+                for i, label in enumerate(labels):
+                    if label not in clusters:
+                        clusters[label] = []
+                    clusters[label].append(levels[i])
+                
+                scored_clusters = []
+                for label, cluster in clusters.items():
+                    if label != -1:
+                        avg_price = np.mean(cluster)
+                        
+                        if is_support:
+                            touches = len(price_data[
+                                (price_data['low'] <= avg_price * 1.002) & 
+                                (price_data['low'] >= avg_price * 0.998)
+                            ])
+                        else:
+                            touches = len(price_data[
+                                (price_data['high'] >= avg_price * 0.998) & 
+                                (price_data['high'] <= avg_price * 1.002)
+                            ])
+                        
+                        volume_mask = (price_data['close'] >= avg_price * 0.997) & (price_data['close'] <= avg_price * 1.003)
+                        volume_score = price_data.loc[volume_mask, 'volume'].mean() / price_data['volume'].mean() if not price_data['volume'].mean() == 0 else 1
+                        
+                        strength = min((touches * 0.3) + (volume_score * 0.7), 1.0)
+                        scored_clusters.append((avg_price, strength, len(cluster)))
+                
+                scored_clusters.sort(key=lambda x: x[1], reverse=True)
+                return [(price, strength) for price, strength, _ in scored_clusters]
             
-            if eps_value <= 0:
-                eps_value = np.mean(levels) * 0.002
+            support_levels = df.iloc[low_idx]['low'].values if len(low_idx) > 0 else []
+            resistance_levels = df.iloc[high_idx]['high'].values if len(high_idx) > 0 else []
             
-            eps_value = max(eps_value, np.mean(levels) * 0.0005)
+            support = cluster_and_score(support_levels, df, is_support=True)
+            resistance = cluster_and_score(resistance_levels, df, is_support=False)
             
-            levels_array = np.array(levels).reshape(-1, 1)
-            
-            try:
-                db = DBSCAN(eps=float(eps_value), min_samples=2).fit(levels_array)
-                labels = db.labels_
-            except Exception as e:
-                print(f"DBSCAN failed: {e}, using simple clustering")
-                labels = np.zeros(len(levels))
-            
-            clusters = {}
-            for i, label in enumerate(labels):
-                if label not in clusters:
-                    clusters[label] = []
-                clusters[label].append(levels[i])
-            
-            scored_clusters = []
-            for label, cluster in clusters.items():
-                if label != -1:
-                    avg_price = np.mean(cluster)
-                    
-                    if is_support:
-                        touches = len(price_data[
-                            (price_data['low'] <= avg_price * 1.002) & 
-                            (price_data['low'] >= avg_price * 0.998)
-                        ])
-                    else:
-                        touches = len(price_data[
-                            (price_data['high'] >= avg_price * 0.998) & 
-                            (price_data['high'] <= avg_price * 1.002)
-                        ])
-                    
-                    volume_mask = (price_data['close'] >= avg_price * 0.997) & (price_data['close'] <= avg_price * 1.003)
-                    volume_score = price_data.loc[volume_mask, 'volume'].mean() / price_data['volume'].mean() if not price_data['volume'].mean() == 0 else 1
-                    
-                    strength = min((touches * 0.3) + (volume_score * 0.7), 1.0)
-                    scored_clusters.append((avg_price, strength, len(cluster)))
-            
-            scored_clusters.sort(key=lambda x: x[1], reverse=True)
-            return [(price, strength) for price, strength, _ in scored_clusters]
-        
-        support_levels = df.iloc[low_idx]['low'].values if len(low_idx) > 0 else []
-        resistance_levels = df.iloc[high_idx]['high'].values if len(high_idx) > 0 else []
-        
-        support = cluster_and_score(support_levels, df, is_support=True)
-        resistance = cluster_and_score(resistance_levels, df, is_support=False)
-        
-        return support[:8], resistance[:8]
+            return support[:8], resistance[:8]
+        except Exception as e:
+            return [], []
     
     def find_strong_support_resistance_1m(self, df, window=7):
         if len(df) < window * 2:
             return [], []
         
-        high_idx = argrelextrema(df['high'].values, np.greater, order=window)[0]
-        low_idx = argrelextrema(df['low'].values, np.less, order=window)[0]
-        
-        def cluster_and_score(levels, price_data, is_support=True):
-            if len(levels) == 0:
-                return []
+        try:
+            high_idx = argrelextrema(df['high'].values, np.greater, order=window)[0]
+            low_idx = argrelextrema(df['low'].values, np.less, order=window)[0]
             
-            eps_value = np.std(levels) * 0.15
+            def cluster_and_score(levels, price_data, is_support=True):
+                if len(levels) == 0:
+                    return []
+                
+                eps_value = np.std(levels) * 0.15
+                if eps_value <= 0:
+                    eps_value = np.mean(levels) * 0.0015
+                eps_value = max(eps_value, np.mean(levels) * 0.0003)
+                
+                levels_array = np.array(levels).reshape(-1, 1)
+                
+                try:
+                    db = DBSCAN(eps=float(eps_value), min_samples=2).fit(levels_array)
+                    labels = db.labels_
+                except:
+                    labels = np.zeros(len(levels))
+                
+                clusters = {}
+                for i, label in enumerate(labels):
+                    if label not in clusters:
+                        clusters[label] = []
+                    clusters[label].append(levels[i])
+                
+                scored_clusters = []
+                for label, cluster in clusters.items():
+                    if label != -1:
+                        avg_price = np.mean(cluster)
+                        
+                        if is_support:
+                            touches = len(price_data[
+                                (price_data['low'] <= avg_price * 1.0015) & 
+                                (price_data['low'] >= avg_price * 0.9985)
+                            ])
+                        else:
+                            touches = len(price_data[
+                                (price_data['high'] >= avg_price * 0.9985) & 
+                                (price_data['high'] <= avg_price * 1.0015)
+                            ])
+                        
+                        volume_mask = (price_data['close'] >= avg_price * 0.998) & (price_data['close'] <= avg_price * 1.002)
+                        volume_score = price_data.loc[volume_mask, 'volume'].mean() / price_data['volume'].mean() if not price_data['volume'].mean() == 0 else 1
+                        
+                        strength = min((touches * 0.25) + (volume_score * 0.75), 1.0)
+                        scored_clusters.append((avg_price, strength, len(cluster)))
+                
+                scored_clusters.sort(key=lambda x: x[1], reverse=True)
+                return [(price, strength) for price, strength, _ in scored_clusters]
             
-            if eps_value <= 0:
-                eps_value = np.mean(levels) * 0.0015
+            support_levels = df.iloc[low_idx]['low'].values if len(low_idx) > 0 else []
+            resistance_levels = df.iloc[high_idx]['high'].values if len(high_idx) > 0 else []
             
-            eps_value = max(eps_value, np.mean(levels) * 0.0003)
+            support = cluster_and_score(support_levels, df, is_support=True)
+            resistance = cluster_and_score(resistance_levels, df, is_support=False)
             
-            levels_array = np.array(levels).reshape(-1, 1)
-            
-            try:
-                db = DBSCAN(eps=float(eps_value), min_samples=2).fit(levels_array)
-                labels = db.labels_
-            except Exception as e:
-                print(f"DBSCAN failed: {e}, using simple clustering")
-                labels = np.zeros(len(levels))
-            
-            clusters = {}
-            for i, label in enumerate(labels):
-                if label not in clusters:
-                    clusters[label] = []
-                clusters[label].append(levels[i])
-            
-            scored_clusters = []
-            for label, cluster in clusters.items():
-                if label != -1:
-                    avg_price = np.mean(cluster)
-                    
-                    if is_support:
-                        touches = len(price_data[
-                            (price_data['low'] <= avg_price * 1.0015) & 
-                            (price_data['low'] >= avg_price * 0.9985)
-                        ])
-                    else:
-                        touches = len(price_data[
-                            (price_data['high'] >= avg_price * 0.9985) & 
-                            (price_data['high'] <= avg_price * 1.0015)
-                        ])
-                    
-                    volume_mask = (price_data['close'] >= avg_price * 0.998) & (price_data['close'] <= avg_price * 1.002)
-                    volume_score = price_data.loc[volume_mask, 'volume'].mean() / price_data['volume'].mean() if not price_data['volume'].mean() == 0 else 1
-                    
-                    strength = min((touches * 0.25) + (volume_score * 0.75), 1.0)
-                    scored_clusters.append((avg_price, strength, len(cluster)))
-            
-            scored_clusters.sort(key=lambda x: x[1], reverse=True)
-            return [(price, strength) for price, strength, _ in scored_clusters]
-        
-        support_levels = df.iloc[low_idx]['low'].values if len(low_idx) > 0 else []
-        resistance_levels = df.iloc[high_idx]['high'].values if len(high_idx) > 0 else []
-        
-        support = cluster_and_score(support_levels, df, is_support=True)
-        resistance = cluster_and_score(resistance_levels, df, is_support=False)
-        
-        return support[:10], resistance[:10]
+            return support[:10], resistance[:10]
+        except Exception as e:
+            return [], []
     
+    # ======================
+    # Chart Creation Methods
+    # ======================
     def create_main_chart(self, df_1h, symbol):
         if df_1h is None or df_1h.empty:
             return go.Figure()
@@ -2554,6 +2487,7 @@ class CryptoAnalyzer:
             decreasing_line_color='#ff0066'
         ), row=1, col=1)
         
+        # Blue Lines
         if symbol in self.blue_liquidity_lines:
             for line in self.blue_liquidity_lines[symbol]:
                 fig.add_shape(
@@ -2580,6 +2514,7 @@ class CryptoAnalyzer:
                     row=1, col=1
                 )
         
+        # White Levels
         if symbol in self.white_liquidity_levels:
             for level in self.white_liquidity_levels[symbol]:
                 fig.add_shape(
@@ -2606,6 +2541,7 @@ class CryptoAnalyzer:
                     row=1, col=1
                 )
         
+        # Yellow Zones
         if symbol in self.yellow_liquidation_zones:
             for zone in self.yellow_liquidation_zones[symbol]:
                 fig.add_shape(
@@ -2632,6 +2568,7 @@ class CryptoAnalyzer:
                     row=1, col=1
                 )
         
+        # Orange Zones
         if symbol in self.orange_magnetic_zones:
             for zone in self.orange_magnetic_zones[symbol]:
                 fig.add_shape(
@@ -2670,7 +2607,6 @@ class CryptoAnalyzer:
         )
         
         fig.update_xaxes(rangeslider_visible=False, row=1, col=1)
-        
         return fig
     
     def create_15m_chart(self, df_15m, symbol):
@@ -2804,7 +2740,6 @@ class CryptoAnalyzer:
             margin=dict(l=20, r=20, t=60, b=20),
             font=dict(color='#e0f0ff', size=10)
         )
-        
         return fig
     
     def create_5m_chart(self, df_5m, symbol):
@@ -2938,7 +2873,6 @@ class CryptoAnalyzer:
             margin=dict(l=20, r=20, t=60, b=20),
             font=dict(color='#e0f0ff', size=10)
         )
-        
         return fig
     
     def create_1m_chart(self, df_1m, symbol):
@@ -3072,7 +3006,6 @@ class CryptoAnalyzer:
             margin=dict(l=20, r=20, t=60, b=20),
             font=dict(color='#e0f0ff', size=8)
         )
-        
         return fig
     
     def create_4h_chart(self, df_4h, symbol):
@@ -3206,11 +3139,10 @@ class CryptoAnalyzer:
             margin=dict(l=20, r=20, t=60, b=20),
             font=dict(color='#e0f0ff', size=10)
         )
-        
         return fig
 
 # ============================================
-# 🔐 Pages
+# 🔐 Login & Admin Pages
 # ============================================
 
 def login_page(user_manager):
@@ -3282,7 +3214,7 @@ def admin_panel(user_manager):
     with col4:
         st.metric("👑 Admins", admin_count)
     
-    st.markdown("### 🟡 Pending Users (Waiting for Activation)")
+    st.markdown("### 🟡 Pending Users")
     pending_users = user_manager.get_pending_users()
     
     if pending_users:
@@ -3360,7 +3292,7 @@ def admin_panel(user_manager):
                 elif data.get('active', False):
                     st.write("🟢 Active")
                 else:
-                    st.write("🔴 Inactive")
+                    st.write("🟡 Pending")
             with col3:
                 st.write(data.get('email', '-'))
             with col4:
@@ -3370,7 +3302,7 @@ def admin_panel(user_manager):
                         expiry_date = datetime.fromisoformat(expiry)
                         days_left = (expiry_date - datetime.now()).days
                         if days_left > 0:
-                            st.write(f"{expiry[:10]} ({days_left}d left)")
+                            st.write(f"{expiry[:10]} ({days_left}d)")
                         else:
                             st.write(f"⚠️ {expiry[:10]} (Expired)")
                     except:
@@ -3464,19 +3396,19 @@ def payment_page(user_manager):
     </div>
     """, unsafe_allow_html=True)
     
-    st.info(f"""
+    st.info("""
     **💰 Subscription Details:**
-    1. Contact admin on Telegram: [@SOFIAN232](https://t.me/SOFIAN232)
-    2. Send **{SUBSCRIPTION_PRICE}** (monthly subscription)
+    1. Contact me on Telegram: [@SOFIAN232](https://t.me/SOFIAN232)
+    2. Send $99 (monthly)
     3. Send your username
     4. Account activated within 24 hours
     
     **💎 Features:**
     - 5 Timeframes (1m, 5m, 15m, 1h, 4h)
-    - 🔵 Blue Liquidity Lines
-    - ⚪ White Strong Support/Resistance
-    - 🟡 Yellow Liquidation Zones
-    - 🧲 Orange Magnetic Zones
+    - Blue Liquidity Lines
+    - White Strong Levels
+    - Yellow Liquidation Zones
+    - Orange Magnetic Zones
     """)
 
 def analysis_interface():
@@ -3484,7 +3416,7 @@ def analysis_interface():
     <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); 
                 border-radius: 15px; margin-bottom: 30px;">
         <h1 style="color: white;">🧠 Advanced Liquidity Analyzer</h1>
-        <p style="color: #e0f0ff;">Candles + Liquidity + Liquidation + Magnetic Zones</p>
+        <p style="color: #e0f0ff;">Bybit | Candles + Liquidity + Liquidation + Magnetic Zones</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -3498,50 +3430,52 @@ def analysis_interface():
     with col2:
         st.write("")
         if st.button("🚀 Analyze", type="primary", use_container_width=True):
-            if check_rate_limit():
-                st.session_state['run_analysis'] = True
+            st.session_state['run_analysis'] = True
     
     if st.session_state.get('run_analysis', False):
         st.session_state['run_analysis'] = False
         
         with st.spinner(f"🔄 Analyzing {symbol}..."):
-            df_1h, df_4h = analyzer.fetch_data(symbol)
-            df_15m = analyzer.fetch_data_15m(symbol)
-            df_5m = analyzer.fetch_data_5m(symbol)
-            df_1m = analyzer.fetch_data_1m(symbol)
-            
-            timeframes = {
-                '4h': df_4h,
-                '1h': df_1h,
-                '15m': df_15m,
-                '5m': df_5m,
-                '1m': df_1m
-            }
-            
-            has_data = any(df is not None and not df.empty for df in timeframes.values())
-            
-            if has_data:
-                tabs = st.tabs(["⏰ 4h", "📈 1h", "⏱️ 15m", "⏱️ 5m", "⏱️ 1m"])
+            try:
+                df_1h, df_4h = analyzer.fetch_data(symbol)
+                df_15m = analyzer.fetch_data_15m(symbol)
+                df_5m = analyzer.fetch_data_5m(symbol)
+                df_1m = analyzer.fetch_data_1m(symbol)
                 
-                for tab, (tf, df) in zip(tabs, timeframes.items()):
-                    with tab:
-                        if df is not None and not df.empty:
-                            if tf == '4h':
-                                fig = analyzer.create_4h_chart(df, symbol)
-                            elif tf == '1h':
-                                fig = analyzer.create_main_chart(df, symbol)
-                            elif tf == '15m':
-                                fig = analyzer.create_15m_chart(df, symbol)
-                            elif tf == '5m':
-                                fig = analyzer.create_5m_chart(df, symbol)
-                            elif tf == '1m':
-                                fig = analyzer.create_1m_chart(df, symbol)
-                            
-                            st.plotly_chart(fig, use_container_width=True)
-                        else:
-                            st.error(f"❌ No data for {tf}")
-            else:
-                st.error(f"❌ No data available for {symbol}")
+                timeframes = {
+                    '4h': df_4h,
+                    '1h': df_1h,
+                    '15m': df_15m,
+                    '5m': df_5m,
+                    '1m': df_1m
+                }
+                
+                has_data = any(df is not None and not df.empty for df in timeframes.values())
+                
+                if has_data:
+                    tabs = st.tabs(["⏰ 4h", "📈 1h", "⏱️ 15m", "⏱️ 5m", "⏱️ 1m"])
+                    
+                    for tab, (tf, df) in zip(tabs, timeframes.items()):
+                        with tab:
+                            if df is not None and not df.empty:
+                                if tf == '4h':
+                                    fig = analyzer.create_4h_chart(df, symbol)
+                                elif tf == '1h':
+                                    fig = analyzer.create_main_chart(df, symbol)
+                                elif tf == '15m':
+                                    fig = analyzer.create_15m_chart(df, symbol)
+                                elif tf == '5m':
+                                    fig = analyzer.create_5m_chart(df, symbol)
+                                elif tf == '1m':
+                                    fig = analyzer.create_1m_chart(df, symbol)
+                                
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.error(f"❌ No data for {tf}")
+                else:
+                    st.error(f"❌ No data available for {symbol}")
+            except Exception as e:
+                st.error(f"❌ Analysis error: {str(e)}")
 
 # ============================================
 # 🚀 Main
@@ -3566,7 +3500,6 @@ def main():
     username = st.session_state['username']
     is_admin = st.session_state['is_admin']
     
-    # إذا كان المستخدم ليس مديراً، نتحقق من تفعيل حسابه
     if not is_admin:
         user_data = user_manager.get_user_data(username)
         if not user_data or not user_data.get('active', False):
@@ -3585,6 +3518,10 @@ def main():
             st.metric("👥 Users", total)
             st.metric("🟢 Active", active)
             st.metric("🟡 Pending", pending)
+        
+        st.markdown("---")
+        st.markdown("### 🔗 Links")
+        st.markdown("[📞 Telegram](https://t.me/SOFIAN232)")
         
         if st.button("🚪 Logout", use_container_width=True):
             st.session_state['logged_in'] = False
