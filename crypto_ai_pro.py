@@ -18,8 +18,6 @@ warnings.filterwarnings('ignore')
 # 🔧 Settings
 # ============================================
 
-CACHE_DURATION_DATA = 120  # 2 دقائق
-CACHE_DURATION_ANALYSIS = 300
 MAX_CANDLES = 500
 RATE_LIMIT_DELAY = 0.1
 
@@ -42,7 +40,6 @@ def get_exchange_spot():
                 'adjustForTimeDifference': True
             }
         })
-        # اختبار الاتصال
         exchange.fetch_ohlcv('BTC/USDT', '1h', limit=1)
         return exchange
     except Exception as e:
@@ -68,11 +65,10 @@ def get_exchange_future():
         return None
 
 # ============================================
-# 📊 Data Fetcher - مع إدارة الطلبات
+# 📊 Data Fetcher
 # ============================================
 
 def fetch_with_retry(exchange, symbol, timeframe, limit, max_retries=3):
-    """جلب البيانات مع إعادة المحاولة"""
     for attempt in range(max_retries):
         try:
             if attempt > 0:
@@ -102,23 +98,18 @@ def fetch_with_retry(exchange, symbol, timeframe, limit, max_retries=3):
     return None
 
 def detect_market_type(symbol):
-    """كشف نوع السوق (سبوت أو فيوتشر)"""
     clean_symbol = symbol.upper().strip()
     
-    # 1. كشف من الصيغة
     if ':' in clean_symbol:
         return 'future'
     if clean_symbol.endswith('-PERP') or clean_symbol.endswith('-SWAP'):
         return 'future'
-    
-    # 2. Bitget: XAU/USDT فيوتشر فقط
     if clean_symbol.startswith('XAU') or clean_symbol.startswith('XAG'):
         return 'future'
     
     return 'spot'
 
 def convert_symbol_for_exchange(symbol, market_type):
-    """تحويل الصيغة حسب نوع السوق"""
     clean_symbol = symbol.upper().strip()
     
     if market_type == 'future':
@@ -126,20 +117,11 @@ def convert_symbol_for_exchange(symbol, market_type):
             return clean_symbol.replace('/', '/') + ':USDT'
     return clean_symbol
 
-@st.cache_data(ttl=CACHE_DURATION_DATA)
+@st.cache_data(ttl=120)
 def fetch_candles_cached(symbol, timeframe='1h', limit=500):
-    """
-    جلب البيانات من Bitget
-    - الحد الأقصى 1000 شمعة في الطلب الواحد
-    - يدعم السبوت والفيوتشر
-    """
-    
     clean_symbol = symbol.upper().strip()
-    
-    # كشف نوع السوق
     market_type = detect_market_type(clean_symbol)
     
-    # اختيار الـ Exchange المناسب
     if market_type == 'future':
         exchange = get_exchange_future()
         clean_symbol = convert_symbol_for_exchange(clean_symbol, market_type)
@@ -151,7 +133,6 @@ def fetch_candles_cached(symbol, timeframe='1h', limit=500):
         return None
     
     try:
-        # Bitget يدعم 1000 شمعة في الطلب الواحد
         ohlcv = fetch_with_retry(exchange, clean_symbol, timeframe, min(limit, 1000))
         
         if not ohlcv:
@@ -170,9 +151,8 @@ def fetch_candles_cached(symbol, timeframe='1h', limit=500):
         st.error(f"❌ Failed to fetch {clean_symbol}: {str(e)}")
         return None
 
-@st.cache_data(ttl=CACHE_DURATION_DATA)
+@st.cache_data(ttl=120)
 def fetch_trades_cached(symbol, limit=500):
-    """جلب الصفقات الأخيرة من Bitget"""
     try:
         clean_symbol = symbol.upper().strip()
         market_type = detect_market_type(clean_symbol)
@@ -204,12 +184,10 @@ def fetch_trades_cached(symbol, limit=500):
         
         return pd.DataFrame(trades_data)
     except Exception as e:
-        st.warning(f"⚠️ Trades fetch warning: {str(e)}")
         return None
 
-@st.cache_data(ttl=CACHE_DURATION_ANALYSIS)
+@st.cache_data(ttl=300)
 def calculate_indicators_cached(df):
-    """حساب المؤشرات الفنية"""
     if df is None or df.empty:
         return df
     
@@ -602,14 +580,6 @@ class CryptoAnalyzer:
         self.orange_magnetic_zones_4h = {}
         
         self.trades_data = {}
-        self.last_fetch_time = {}
-        
-    def _should_refresh(self, symbol):
-        """التحقق إذا كان يجب تحديث البيانات (كل 2 دقيقة)"""
-        now = time.time()
-        if symbol not in self.last_fetch_time:
-            self.last_fetch_time[symbol] = 0
-        return (now - self.last_fetch_time[symbol]) > CACHE_DURATION_DATA
         
     def fetch_data(self, symbol):
         try:
@@ -621,7 +591,6 @@ class CryptoAnalyzer:
             if df_4h is not None:
                 df_4h = calculate_indicators_cached(df_4h)
             
-            # جلب بيانات الصفقات
             self.fetch_trades_data(symbol)
             
             if df_1h is not None:
@@ -638,7 +607,6 @@ class CryptoAnalyzer:
                 self.calculate_yellow_liquidation_zones_4h(df_4h, symbol)
                 self.calculate_orange_magnetic_zones_4h(df_4h, current_price_4h, symbol)
             
-            self.last_fetch_time[symbol] = time.time()
             return df_1h, df_4h
             
         except Exception as e:
@@ -769,9 +737,6 @@ class CryptoAnalyzer:
         
         return df.dropna()
     
-    # ======================
-    # Orange Magnetic Zones
-    # ======================
     def calculate_orange_magnetic_zones(self, df, current_price, symbol):
         orange_zones = []
         
@@ -1117,9 +1082,6 @@ class CryptoAnalyzer:
         orange_zones.sort(key=lambda x: x['strength'], reverse=True)
         self.orange_magnetic_zones_4h[symbol] = orange_zones[:4]
     
-    # ======================
-    # Yellow Liquidation Zones
-    # ======================
     def calculate_yellow_liquidation_zones(self, df, symbol):
         yellow_zones = []
         
@@ -1465,9 +1427,6 @@ class CryptoAnalyzer:
         yellow_zones.sort(key=lambda x: x['strength'], reverse=True)
         self.yellow_liquidation_zones_4h[symbol] = yellow_zones[:5]
     
-    # ======================
-    # Blue Liquidity Lines
-    # ======================
     def calculate_blue_liquidity_lines(self, df_1h, current_price, symbol):
         blue_lines = []
         
@@ -1982,9 +1941,6 @@ class CryptoAnalyzer:
         
         self.blue_liquidity_lines_4h[symbol] = unique_lines
     
-    # ======================
-    # White Liquidity Levels
-    # ======================
     def calculate_white_liquidity_levels(self, df_1h, current_price, symbol):
         white_levels = []
         
@@ -2195,9 +2151,6 @@ class CryptoAnalyzer:
         
         self.white_liquidity_levels_4h[symbol] = white_levels
     
-    # ======================
-    # Find Support/Resistance
-    # ======================
     def find_strong_support_resistance(self, df, window=20):
         if len(df) < window * 2:
             return [], []
@@ -2462,9 +2415,6 @@ class CryptoAnalyzer:
         except Exception as e:
             return [], []
     
-    # ======================
-    # Chart Creation Methods
-    # ======================
     def create_main_chart(self, df_1h, symbol):
         if df_1h is None or df_1h.empty:
             return go.Figure()
@@ -2482,7 +2432,6 @@ class CryptoAnalyzer:
             decreasing_line_color='#ff0066'
         ), row=1, col=1)
         
-        # Blue Lines
         if symbol in self.blue_liquidity_lines:
             for line in self.blue_liquidity_lines[symbol]:
                 fig.add_shape(
@@ -2509,7 +2458,6 @@ class CryptoAnalyzer:
                     row=1, col=1
                 )
         
-        # White Levels
         if symbol in self.white_liquidity_levels:
             for level in self.white_liquidity_levels[symbol]:
                 fig.add_shape(
@@ -2536,7 +2484,6 @@ class CryptoAnalyzer:
                     row=1, col=1
                 )
         
-        # Yellow Zones
         if symbol in self.yellow_liquidation_zones:
             for zone in self.yellow_liquidation_zones[symbol]:
                 fig.add_shape(
@@ -2563,7 +2510,6 @@ class CryptoAnalyzer:
                     row=1, col=1
                 )
         
-        # Orange Zones
         if symbol in self.orange_magnetic_zones:
             for zone in self.orange_magnetic_zones[symbol]:
                 fig.add_shape(
@@ -3408,10 +3354,11 @@ def payment_page(user_manager):
 
 def analysis_interface():
     st.markdown("""
-    <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); 
+    <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%); 
                 border-radius: 15px; margin-bottom: 30px;">
-        <h1 style="color: white;">🧠 Advanced Liquidity Analyzer</h1>
-        <p style="color: #e0f0ff;">Bitget | Candles + Liquidity + Liquidation + Magnetic Zones</p>
+        <h1 style="color: #00ff88; font-size: 2.5em; margin-bottom: 5px;">🚀 GTA1CRYPTO</h1>
+        <p style="color: #e0f0ff; font-size: 1.1em;">Advanced Liquidity & Liquidation Analysis</p>
+        <p style="color: #8899bb; font-size: 0.9em;">Bitget | Candles + Liquidity + Liquidation + Magnetic Zones</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -3502,7 +3449,7 @@ def main():
             return
     
     with st.sidebar:
-        st.markdown("### 🧠 Analyzer")
+        st.markdown("### 🧠 GTA1CRYPTO")
         st.markdown(f"👤 **User:** {username}")
         st.markdown(f"🔑 **Role:** {'👑 Admin' if is_admin else '👤 User'}")
         
