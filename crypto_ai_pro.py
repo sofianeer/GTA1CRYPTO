@@ -128,7 +128,7 @@ def convert_symbol_for_exchange(symbol, market_type):
             return clean_symbol.replace('/', '/') + ':USDT'
     return clean_symbol
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=60)  # ← تم التعديل: 60 ثانية = دقيقة واحدة
 def fetch_candles_cached(symbol, timeframe='1h', limit=500):
     clean_symbol = symbol.upper().strip()
     market_type = detect_market_type(clean_symbol)
@@ -162,7 +162,7 @@ def fetch_candles_cached(symbol, timeframe='1h', limit=500):
         st.error(f"❌ Failed to fetch {clean_symbol}: {str(e)}")
         return None
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=60)  # ← تم التعديل: 60 ثانية = دقيقة واحدة
 def fetch_trades_cached(symbol, limit=500):
     try:
         clean_symbol = symbol.upper().strip()
@@ -197,7 +197,7 @@ def fetch_trades_cached(symbol, limit=500):
     except Exception as e:
         return None
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=180)  # ← تم التعديل: 180 ثانية = 3 دقائق
 def calculate_indicators_cached(df):
     if df is None or df.empty:
         return df
