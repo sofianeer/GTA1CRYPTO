@@ -28,6 +28,7 @@ st.set_page_config(
 )
 
 MAX_CANDLES = 500
+MAX_CANDLES_15M = 1000  # ← 1000 شمعة فقط لفريم 15 دقيقة
 RATE_LIMIT_DELAY = 0.1
 
 ADMIN_USERNAME = "adminSO"
@@ -721,7 +722,8 @@ class CryptoAnalyzer:
     
     def fetch_data_15m(self, symbol):
         try:
-            df_15m = fetch_candles_cached(symbol, '15m', MAX_CANDLES)
+            # ← هنا تم التعديل: جلب 1000 شمعة لفريم 15 دقيقة
+            df_15m = fetch_candles_cached(symbol, '15m', MAX_CANDLES_15M)
             
             if df_15m is not None:
                 df_15m = self.calculate_indicators_15m(df_15m)
