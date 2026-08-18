@@ -27,8 +27,8 @@ st.set_page_config(
     initial_sidebar_state="auto"
 )
 
-MAX_CANDLES = 500
-MAX_CANDLES_15M = 1000  # ← 1000 شمعة فقط لفريم 15 دقيقة
+MAX_CANDLES = 1000  # ← كل الأطراف 1000 شمعة
+MAX_CANDLES_4H = 500  # ← فقط 4 ساعات 500 شمعة
 RATE_LIMIT_DELAY = 0.1
 
 ADMIN_USERNAME = "adminSO"
@@ -690,8 +690,9 @@ class CryptoAnalyzer:
         
     def fetch_data(self, symbol):
         try:
-            df_1h = fetch_candles_cached(symbol, '1h', MAX_CANDLES)
-            df_4h = fetch_candles_cached(symbol, '4h', MAX_CANDLES // 2)
+            # 1h و 4h
+            df_1h = fetch_candles_cached(symbol, '1h', MAX_CANDLES)  # 1000
+            df_4h = fetch_candles_cached(symbol, '4h', MAX_CANDLES_4H)  # 500 فقط
             
             if df_1h is not None:
                 df_1h = calculate_indicators_cached(df_1h)
@@ -722,8 +723,8 @@ class CryptoAnalyzer:
     
     def fetch_data_15m(self, symbol):
         try:
-            # ← هنا تم التعديل: جلب 1000 شمعة لفريم 15 دقيقة
-            df_15m = fetch_candles_cached(symbol, '15m', MAX_CANDLES_15M)
+            # 15m ← 1000 شمعة
+            df_15m = fetch_candles_cached(symbol, '15m', MAX_CANDLES)
             
             if df_15m is not None:
                 df_15m = self.calculate_indicators_15m(df_15m)
@@ -741,6 +742,7 @@ class CryptoAnalyzer:
     
     def fetch_data_5m(self, symbol):
         try:
+            # 5m ← 1000 شمعة
             df_5m = fetch_candles_cached(symbol, '5m', MAX_CANDLES)
             
             if df_5m is not None:
@@ -759,6 +761,7 @@ class CryptoAnalyzer:
     
     def fetch_data_1m(self, symbol):
         try:
+            # 1m ← 1000 شمعة
             df_1m = fetch_candles_cached(symbol, '1m', MAX_CANDLES)
             
             if df_1m is not None:
