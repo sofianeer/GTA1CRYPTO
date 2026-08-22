@@ -128,7 +128,7 @@ def convert_symbol_for_exchange(symbol, market_type):
             return clean_symbol.replace('/', '/') + ':USDT'
     return clean_symbol
 
-@st.cache_data(ttl=60)  # ← تم التعديل: 60 ثانية = دقيقة واحدة
+@st.cache_data(ttl=60)
 def fetch_candles_cached(symbol, timeframe='1h', limit=500):
     clean_symbol = symbol.upper().strip()
     market_type = detect_market_type(clean_symbol)
@@ -162,7 +162,7 @@ def fetch_candles_cached(symbol, timeframe='1h', limit=500):
         st.error(f"❌ Failed to fetch {clean_symbol}: {str(e)}")
         return None
 
-@st.cache_data(ttl=60)  # ← تم التعديل: 60 ثانية = دقيقة واحدة
+@st.cache_data(ttl=60)
 def fetch_trades_cached(symbol, limit=500):
     try:
         clean_symbol = symbol.upper().strip()
@@ -197,7 +197,7 @@ def fetch_trades_cached(symbol, limit=500):
     except Exception as e:
         return None
 
-@st.cache_data(ttl=180)  # ← تم التعديل: 180 ثانية = 3 دقائق
+@st.cache_data(ttl=180)
 def calculate_indicators_cached(df):
     if df is None or df.empty:
         return df
@@ -390,7 +390,6 @@ class UserManager:
             ))
             conn.commit()
             conn.close()
-            # تنظيف بعد التسجيل
             self._auto_cleanup()
             return True, "✅ Registration successful! Wait for admin activation."
         except Exception as e:
@@ -636,7 +635,6 @@ class UserManager:
             return None
     
     def get_db_size(self):
-        """الحصول على حجم قاعدة البيانات"""
         try:
             if os.path.exists(self.db_file):
                 return os.path.getsize(self.db_file)
@@ -645,7 +643,6 @@ class UserManager:
             return 0
     
     def check_db_health(self):
-        """التحقق من صحة قاعدة البيانات"""
         try:
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
@@ -674,6 +671,7 @@ class CryptoAnalyzer:
         self.white_liquidity_levels_1m = {}
         self.white_liquidity_levels_4h = {}
         
+        # الحقول الجديدة للـ Liquidation Zones
         self.yellow_liquidation_zones = {}
         self.yellow_liquidation_zones_15m = {}
         self.yellow_liquidation_zones_5m = {}
@@ -690,9 +688,8 @@ class CryptoAnalyzer:
         
     def fetch_data(self, symbol):
         try:
-            # 1h و 4h
-            df_1h = fetch_candles_cached(symbol, '1h', MAX_CANDLES)  # 1000
-            df_4h = fetch_candles_cached(symbol, '4h', MAX_CANDLES_4H)  # 500 فقط
+            df_1h = fetch_candles_cached(symbol, '1h', MAX_CANDLES)
+            df_4h = fetch_candles_cached(symbol, '4h', MAX_CANDLES_4H)
             
             if df_1h is not None:
                 df_1h = calculate_indicators_cached(df_1h)
@@ -705,14 +702,15 @@ class CryptoAnalyzer:
                 current_price = df_1h['close'].iloc[-1]
                 self.calculate_blue_liquidity_lines(df_1h, current_price, symbol)
                 self.calculate_white_liquidity_levels(df_1h, current_price, symbol)
-                self.calculate_yellow_liquidation_zones(df_1h, symbol)
+                # استخدام الدالة المحسنة للـ Liquidation Zones من الكود الثاني
+                self.calculate_enhanced_liquidation_zones(df_1h, symbol, '1h')
                 self.calculate_orange_magnetic_zones(df_1h, current_price, symbol)
             
             if df_4h is not None:
                 current_price_4h = df_4h['close'].iloc[-1]
                 self.calculate_blue_liquidity_lines_4h(df_4h, current_price_4h, symbol)
                 self.calculate_white_liquidity_levels_4h(df_4h, current_price_4h, symbol)
-                self.calculate_yellow_liquidation_zones_4h(df_4h, symbol)
+                self.calculate_enhanced_liquidation_zones(df_4h, symbol, '4h')
                 self.calculate_orange_magnetic_zones_4h(df_4h, current_price_4h, symbol)
             
             return df_1h, df_4h
@@ -723,7 +721,6 @@ class CryptoAnalyzer:
     
     def fetch_data_15m(self, symbol):
         try:
-            # 15m ← 1000 شمعة
             df_15m = fetch_candles_cached(symbol, '15m', MAX_CANDLES)
             
             if df_15m is not None:
@@ -731,7 +728,7 @@ class CryptoAnalyzer:
                 current_price_15m = df_15m['close'].iloc[-1]
                 self.calculate_blue_liquidity_lines_15m(df_15m, current_price_15m, symbol)
                 self.calculate_white_liquidity_levels_15m(df_15m, current_price_15m, symbol)
-                self.calculate_yellow_liquidation_zones_15m(df_15m, symbol)
+                self.calculate_enhanced_liquidation_zones(df_15m, symbol, '15m')
                 self.calculate_orange_magnetic_zones_15m(df_15m, current_price_15m, symbol)
             
             return df_15m
@@ -742,7 +739,6 @@ class CryptoAnalyzer:
     
     def fetch_data_5m(self, symbol):
         try:
-            # 5m ← 1000 شمعة
             df_5m = fetch_candles_cached(symbol, '5m', MAX_CANDLES)
             
             if df_5m is not None:
@@ -750,7 +746,7 @@ class CryptoAnalyzer:
                 current_price_5m = df_5m['close'].iloc[-1]
                 self.calculate_blue_liquidity_lines_5m(df_5m, current_price_5m, symbol)
                 self.calculate_white_liquidity_levels_5m(df_5m, current_price_5m, symbol)
-                self.calculate_yellow_liquidation_zones_5m(df_5m, symbol)
+                self.calculate_enhanced_liquidation_zones(df_5m, symbol, '5m')
                 self.calculate_orange_magnetic_zones_5m(df_5m, current_price_5m, symbol)
             
             return df_5m
@@ -761,7 +757,6 @@ class CryptoAnalyzer:
     
     def fetch_data_1m(self, symbol):
         try:
-            # 1m ← 1000 شمعة
             df_1m = fetch_candles_cached(symbol, '1m', MAX_CANDLES)
             
             if df_1m is not None:
@@ -769,7 +764,7 @@ class CryptoAnalyzer:
                 current_price_1m = df_1m['close'].iloc[-1]
                 self.calculate_blue_liquidity_lines_1m(df_1m, current_price_1m, symbol)
                 self.calculate_white_liquidity_levels_1m(df_1m, current_price_1m, symbol)
-                self.calculate_yellow_liquidation_zones_1m(df_1m, symbol)
+                self.calculate_enhanced_liquidation_zones(df_1m, symbol, '1m')
                 self.calculate_orange_magnetic_zones_1m(df_1m, current_price_1m, symbol)
             
             return df_1m
@@ -785,7 +780,165 @@ class CryptoAnalyzer:
                 self.trades_data[symbol] = trades_df
         except Exception as e:
             pass
-    
+
+    # ============================================
+    # 🔥 Enhanced Liquidation Zones (من الكود الثاني)
+    # ============================================
+
+    def calculate_enhanced_liquidation_zones(self, df, symbol, timeframe='1h'):
+        """حساب مناطق التصفية المحسنة من الكود الثاني مع دقة عالية"""
+        if df is None or len(df) < 100:
+            return
+        
+        zones = self._calculate_timeframe_liquidation_zones(df)
+        
+        # تجميع المناطق المتقاربة باستخدام DBSCAN
+        if zones:
+            prices = np.array([z['price'] for z in zones]).reshape(-1, 1)
+            if len(prices) > 1:
+                # حساب epsilon المناسب
+                sorted_prices = sorted([z['price'] for z in zones])
+                if len(sorted_prices) > 1:
+                    price_diffs = np.diff(sorted_prices)
+                    eps = np.percentile(price_diffs, 75) * 2.5 if len(price_diffs) > 0 else 0.005 * df['close'].iloc[-1]
+                else:
+                    eps = 0.005 * df['close'].iloc[-1]
+                
+                try:
+                    db = DBSCAN(eps=eps, min_samples=2).fit(prices)
+                    labels = db.labels_
+                    
+                    clusters = {}
+                    for i, label in enumerate(labels):
+                        if label not in clusters:
+                            clusters[label] = []
+                        clusters[label].append(zones[i])
+                    
+                    # دمج المناطق في كل مجموعة
+                    merged_zones = []
+                    for label, cluster in clusters.items():
+                        if label != -1:  # تجاهل النقاط الشاذة
+                            zone_price = np.mean([z['price'] for z in cluster])
+                            zone_strength = np.mean([z['strength'] for z in cluster])
+                            zone_type = max(set([z['type'] for z in cluster]), key=[z['type'] for z in cluster].count)
+                            confirmed = any(z['confirmed'] for z in cluster)
+                            wick_ratio = np.mean([z['wick_ratio'] for z in cluster])
+                            volume_ratio = np.mean([z['volume_ratio'] for z in cluster])
+                            
+                            merged_zones.append({
+                                'price': zone_price,
+                                'strength': zone_strength,
+                                'type': zone_type,
+                                'confirmed': confirmed,
+                                'cluster_size': len(cluster),
+                                'wick_ratio': wick_ratio,
+                                'volume_ratio': volume_ratio,
+                                'description': f'🟡 {zone_type.upper()} {zone_strength:.1f}x',
+                                'color': '#FFFF00',
+                                'width': 1 + (zone_strength * 1.5),
+                                'dash': 'dash',
+                                'distance_pct': abs(zone_price - df['close'].iloc[-1]) / df['close'].iloc[-1] * 100
+                            })
+                    
+                    zones = merged_zones
+                except Exception as e:
+                    pass
+        
+        # تخزين النتائج حسب الإطار الزمني
+        if timeframe == '1h':
+            self.yellow_liquidation_zones[symbol] = zones[:8]
+        elif timeframe == '4h':
+            self.yellow_liquidation_zones_4h[symbol] = zones[:6]
+        elif timeframe == '15m':
+            self.yellow_liquidation_zones_15m[symbol] = zones[:6]
+        elif timeframe == '5m':
+            self.yellow_liquidation_zones_5m[symbol] = zones[:8]
+        elif timeframe == '1m':
+            self.yellow_liquidation_zones_1m[symbol] = zones[:10]
+
+    def _calculate_timeframe_liquidation_zones(self, df):
+        """حساب مناطق التصفية لإطار زمني محدد (من الكود الثاني)"""
+        zones = []
+        
+        if df is None or len(df) < 50:
+            return zones
+        
+        # حساب المؤشرات الأساسية
+        typical_price = (df['high'] + df['low'] + df['close']) / 3
+        df['vwap'] = (df['volume'] * typical_price).cumsum() / df['volume'].cumsum()
+        
+        # حساب متوسط الحجم المتحرك
+        volume_ma = df['volume'].rolling(20).mean()
+        
+        # البحث عن شموع رفض السعر
+        for i in range(2, len(df)-3):
+            current = df.iloc[i]
+            prev = df.iloc[i-1]
+            next_candle = df.iloc[i+1]
+            next_next = df.iloc[i+2]
+            
+            # حجم الشمعة الحالية
+            candle_range = current['high'] - current['low']
+            if candle_range == 0:
+                continue
+            
+            # حساب أطوال الظلال
+            upper_wick = current['high'] - max(current['open'], current['close'])
+            lower_wick = min(current['open'], current['close']) - current['low']
+            body_size = abs(current['close'] - current['open'])
+            
+            # نسبة الظل إلى الجسم
+            wick_ratio = max(upper_wick, lower_wick) / body_size if body_size > 0 else 0
+            volume_ratio = current['volume'] / volume_ma.iloc[i] if volume_ma.iloc[i] > 0 else 1
+            
+            # المنطقة الصاعدة (طلب قوي مع ظل سفلي طويل)
+            if (volume_ratio > 1.5 and 
+                lower_wick > candle_range * 0.4 and 
+                current['close'] > current['open'] and
+                current['low'] < prev['low'] and
+                next_candle['close'] > current['high']):
+                
+                # تأكيد من الشمعة التالية
+                confirmed = next_next['close'] > next_candle['high'] if i+2 < len(df) else False
+                
+                zone = {
+                    'price': current['low'],
+                    'timestamp': current['timestamp'],
+                    'type': 'bullish',
+                    'strength': min(volume_ratio, 5.0),
+                    'confirmed': confirmed,
+                    'wick_ratio': min(lower_wick / candle_range, 1.0),
+                    'volume_ratio': volume_ratio
+                }
+                zones.append(zone)
+            
+            # المنطقة الهابطة (عرض قوي مع ظل علوي طويل)
+            elif (volume_ratio > 1.5 and 
+                  upper_wick > candle_range * 0.4 and 
+                  current['close'] < current['open'] and
+                  current['high'] > prev['high'] and
+                  next_candle['close'] < current['low']):
+                
+                # تأكيد من الشمعة التالية
+                confirmed = next_next['close'] < next_candle['low'] if i+2 < len(df) else False
+                
+                zone = {
+                    'price': current['high'],
+                    'timestamp': current['timestamp'],
+                    'type': 'bearish',
+                    'strength': min(volume_ratio, 5.0),
+                    'confirmed': confirmed,
+                    'wick_ratio': min(upper_wick / candle_range, 1.0),
+                    'volume_ratio': volume_ratio
+                }
+                zones.append(zone)
+        
+        return zones
+
+    # ============================================
+    # بقية الدوال (محفوظة كما هي من الكود الأول)
+    # ============================================
+
     def calculate_indicators_15m(self, df):
         if df.empty:
             return df
@@ -847,696 +1000,6 @@ class CryptoAnalyzer:
         df['VWAP'] = (df['volume'] * typical_price).cumsum() / df['volume'].cumsum()
         
         return df.dropna()
-    
-    def calculate_orange_magnetic_zones(self, df, current_price, symbol):
-        orange_zones = []
-        
-        if df is None or len(df) < 100:
-            self.orange_magnetic_zones[symbol] = orange_zones
-            return
-        
-        try:
-            close_prices = df['close'].values
-            returns = np.diff(close_prices) / close_prices[:-1]
-            price_velocity = np.mean(np.abs(returns[-20:])) * 100 if len(returns) >= 20 else 1
-            
-            turning_points = []
-            for i in range(2, len(df)-2):
-                if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
-                    df['high'].iloc[i] > df['high'].iloc[i+1] and
-                    df['close'].iloc[i] > df['open'].iloc[i]):
-                    turning_points.append(df['high'].iloc[i])
-                
-                if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
-                    df['low'].iloc[i] < df['low'].iloc[i+1] and
-                    df['close'].iloc[i] < df['open'].iloc[i]):
-                    turning_points.append(df['low'].iloc[i])
-            
-            if len(turning_points) < 5:
-                self.orange_magnetic_zones[symbol] = orange_zones
-                return
-            
-            turning_points = np.array(turning_points[-30:]).reshape(-1, 1) if len(turning_points) >= 30 else np.array(turning_points).reshape(-1, 1)
-            
-            if len(turning_points) >= 3:
-                n_clusters = min(3, len(turning_points)//3)
-                if n_clusters >= 1:
-                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-                    clusters = kmeans.fit_predict(turning_points)
-                    
-                    unique_clusters = np.unique(clusters)
-                    for cluster_id in unique_clusters:
-                        cluster_points = turning_points[clusters == cluster_id]
-                        if len(cluster_points) >= 2:
-                            center_price = np.mean(cluster_points)
-                            points_density = len(cluster_points) / (np.std(cluster_points) + 1)
-                            distance_pct = abs(center_price - current_price) / current_price * 100
-                            strength = min(points_density / 10, 1.0) * (1 - distance_pct / 10)
-                            
-                            if center_price > current_price:
-                                attraction_direction = "↑"
-                            else:
-                                attraction_direction = "↓"
-                            
-                            if distance_pct < price_velocity * 2:
-                                orange_zones.append({
-                                    'price': float(center_price),
-                                    'type': 'magnetic_zone',
-                                    'strength': float(strength),
-                                    'distance_pct': distance_pct,
-                                    'points_count': len(cluster_points),
-                                    'attraction_direction': attraction_direction,
-                                    'description': f'🧲 {attraction_direction}',
-                                    'color': 'rgba(255, 165, 0, 0.5)',
-                                    'width': 2 + strength * 2,
-                                    'dash': 'dot' if strength < 0.5 else 'solid'
-                                })
-        except Exception as e:
-            pass
-        
-        orange_zones.sort(key=lambda x: x['strength'], reverse=True)
-        self.orange_magnetic_zones[symbol] = orange_zones[:5]
-    
-    def calculate_orange_magnetic_zones_15m(self, df, current_price, symbol):
-        orange_zones = []
-        
-        if df is None or len(df) < 100:
-            self.orange_magnetic_zones_15m[symbol] = orange_zones
-            return
-        
-        try:
-            close_prices = df['close'].values
-            returns = np.diff(close_prices) / close_prices[:-1]
-            price_velocity = np.mean(np.abs(returns[-30:])) * 100 if len(returns) >= 30 else 1
-            
-            turning_points = []
-            for i in range(2, len(df)-2):
-                if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
-                    df['high'].iloc[i] > df['high'].iloc[i+1] and
-                    df['close'].iloc[i] > df['open'].iloc[i]):
-                    turning_points.append(df['high'].iloc[i])
-                
-                if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
-                    df['low'].iloc[i] < df['low'].iloc[i+1] and
-                    df['close'].iloc[i] < df['open'].iloc[i]):
-                    turning_points.append(df['low'].iloc[i])
-            
-            if len(turning_points) < 5:
-                self.orange_magnetic_zones_15m[symbol] = orange_zones
-                return
-            
-            turning_points = np.array(turning_points[-40:]).reshape(-1, 1) if len(turning_points) >= 40 else np.array(turning_points).reshape(-1, 1)
-            
-            if len(turning_points) >= 3:
-                n_clusters = min(4, len(turning_points)//3)
-                if n_clusters >= 1:
-                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-                    clusters = kmeans.fit_predict(turning_points)
-                    
-                    unique_clusters = np.unique(clusters)
-                    for cluster_id in unique_clusters:
-                        cluster_points = turning_points[clusters == cluster_id]
-                        if len(cluster_points) >= 2:
-                            center_price = np.mean(cluster_points)
-                            points_density = len(cluster_points) / (np.std(cluster_points) + 1)
-                            distance_pct = abs(center_price - current_price) / current_price * 100
-                            strength = min(points_density / 10, 1.0) * (1 - distance_pct / 8)
-                            
-                            if center_price > current_price:
-                                attraction_direction = "↑"
-                            else:
-                                attraction_direction = "↓"
-                            
-                            if distance_pct < price_velocity * 2:
-                                orange_zones.append({
-                                    'price': float(center_price),
-                                    'type': 'magnetic_zone_15m',
-                                    'strength': float(strength),
-                                    'distance_pct': distance_pct,
-                                    'points_count': len(cluster_points),
-                                    'attraction_direction': attraction_direction,
-                                    'description': f'🧲{attraction_direction}',
-                                    'color': 'rgba(255, 165, 0, 0.5)',
-                                    'width': 2 + strength * 2,
-                                    'dash': 'dot' if strength < 0.5 else 'solid'
-                                })
-        except Exception as e:
-            pass
-        
-        orange_zones.sort(key=lambda x: x['strength'], reverse=True)
-        self.orange_magnetic_zones_15m[symbol] = orange_zones[:5]
-    
-    def calculate_orange_magnetic_zones_5m(self, df, current_price, symbol):
-        orange_zones = []
-        
-        if df is None or len(df) < 80:
-            self.orange_magnetic_zones_5m[symbol] = orange_zones
-            return
-        
-        try:
-            close_prices = df['close'].values
-            returns = np.diff(close_prices) / close_prices[:-1]
-            price_velocity = np.mean(np.abs(returns[-40:])) * 100 if len(returns) >= 40 else 1
-            
-            turning_points = []
-            for i in range(2, len(df)-2):
-                if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
-                    df['high'].iloc[i] > df['high'].iloc[i+1] and
-                    df['close'].iloc[i] > df['open'].iloc[i]):
-                    turning_points.append(df['high'].iloc[i])
-                
-                if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
-                    df['low'].iloc[i] < df['low'].iloc[i+1] and
-                    df['close'].iloc[i] < df['open'].iloc[i]):
-                    turning_points.append(df['low'].iloc[i])
-            
-            if len(turning_points) < 5:
-                self.orange_magnetic_zones_5m[symbol] = orange_zones
-                return
-            
-            turning_points = np.array(turning_points[-50:]).reshape(-1, 1) if len(turning_points) >= 50 else np.array(turning_points).reshape(-1, 1)
-            
-            if len(turning_points) >= 3:
-                n_clusters = min(5, len(turning_points)//3)
-                if n_clusters >= 1:
-                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-                    clusters = kmeans.fit_predict(turning_points)
-                    
-                    unique_clusters = np.unique(clusters)
-                    for cluster_id in unique_clusters:
-                        cluster_points = turning_points[clusters == cluster_id]
-                        if len(cluster_points) >= 2:
-                            center_price = np.mean(cluster_points)
-                            points_density = len(cluster_points) / (np.std(cluster_points) + 1)
-                            distance_pct = abs(center_price - current_price) / current_price * 100
-                            strength = min(points_density / 10, 1.0) * (1 - distance_pct / 5)
-                            
-                            if center_price > current_price:
-                                attraction_direction = "↑"
-                            else:
-                                attraction_direction = "↓"
-                            
-                            if distance_pct < price_velocity * 2:
-                                orange_zones.append({
-                                    'price': float(center_price),
-                                    'type': 'magnetic_zone_5m',
-                                    'strength': float(strength),
-                                    'distance_pct': distance_pct,
-                                    'points_count': len(cluster_points),
-                                    'attraction_direction': attraction_direction,
-                                    'description': f'🧲{attraction_direction}',
-                                    'color': 'rgba(255, 165, 0, 0.5)',
-                                    'width': 2 + strength * 2,
-                                    'dash': 'dot' if strength < 0.5 else 'solid'
-                                })
-        except Exception as e:
-            pass
-        
-        orange_zones.sort(key=lambda x: x['strength'], reverse=True)
-        self.orange_magnetic_zones_5m[symbol] = orange_zones[:6]
-    
-    def calculate_orange_magnetic_zones_1m(self, df, current_price, symbol):
-        orange_zones = []
-        
-        if df is None or len(df) < 60:
-            self.orange_magnetic_zones_1m[symbol] = orange_zones
-            return
-        
-        try:
-            close_prices = df['close'].values
-            returns = np.diff(close_prices) / close_prices[:-1]
-            price_velocity = np.mean(np.abs(returns[-50:])) * 100 if len(returns) >= 50 else 1
-            
-            turning_points = []
-            for i in range(2, len(df)-2):
-                if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
-                    df['high'].iloc[i] > df['high'].iloc[i+1] and
-                    df['close'].iloc[i] > df['open'].iloc[i]):
-                    turning_points.append(df['high'].iloc[i])
-                
-                if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
-                    df['low'].iloc[i] < df['low'].iloc[i+1] and
-                    df['close'].iloc[i] < df['open'].iloc[i]):
-                    turning_points.append(df['low'].iloc[i])
-            
-            if len(turning_points) < 5:
-                self.orange_magnetic_zones_1m[symbol] = orange_zones
-                return
-            
-            turning_points = np.array(turning_points[-60:]).reshape(-1, 1) if len(turning_points) >= 60 else np.array(turning_points).reshape(-1, 1)
-            
-            if len(turning_points) >= 3:
-                n_clusters = min(6, len(turning_points)//3)
-                if n_clusters >= 1:
-                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-                    clusters = kmeans.fit_predict(turning_points)
-                    
-                    unique_clusters = np.unique(clusters)
-                    for cluster_id in unique_clusters:
-                        cluster_points = turning_points[clusters == cluster_id]
-                        if len(cluster_points) >= 2:
-                            center_price = np.mean(cluster_points)
-                            points_density = len(cluster_points) / (np.std(cluster_points) + 1)
-                            distance_pct = abs(center_price - current_price) / current_price * 100
-                            strength = min(points_density / 10, 1.0) * (1 - distance_pct / 3)
-                            
-                            if center_price > current_price:
-                                attraction_direction = "↑"
-                            else:
-                                attraction_direction = "↓"
-                            
-                            if distance_pct < price_velocity * 1.5:
-                                orange_zones.append({
-                                    'price': float(center_price),
-                                    'type': 'magnetic_zone_1m',
-                                    'strength': float(strength),
-                                    'distance_pct': distance_pct,
-                                    'points_count': len(cluster_points),
-                                    'attraction_direction': attraction_direction,
-                                    'description': f'🧲{attraction_direction}',
-                                    'color': 'rgba(255, 165, 0, 0.5)',
-                                    'width': 1.5 + strength * 2,
-                                    'dash': 'dot' if strength < 0.5 else 'solid'
-                                })
-        except Exception as e:
-            pass
-        
-        orange_zones.sort(key=lambda x: x['strength'], reverse=True)
-        self.orange_magnetic_zones_1m[symbol] = orange_zones[:7]
-    
-    def calculate_orange_magnetic_zones_4h(self, df, current_price, symbol):
-        orange_zones = []
-        
-        if df is None or len(df) < 50:
-            self.orange_magnetic_zones_4h[symbol] = orange_zones
-            return
-        
-        try:
-            close_prices = df['close'].values
-            returns = np.diff(close_prices) / close_prices[:-1]
-            price_velocity = np.mean(np.abs(returns[-15:])) * 100 if len(returns) >= 15 else 1
-            
-            turning_points = []
-            for i in range(2, len(df)-2):
-                if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
-                    df['high'].iloc[i] > df['high'].iloc[i+1] and
-                    df['close'].iloc[i] > df['open'].iloc[i]):
-                    turning_points.append(df['high'].iloc[i])
-                
-                if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
-                    df['low'].iloc[i] < df['low'].iloc[i+1] and
-                    df['close'].iloc[i] < df['open'].iloc[i]):
-                    turning_points.append(df['low'].iloc[i])
-            
-            if len(turning_points) < 5:
-                self.orange_magnetic_zones_4h[symbol] = orange_zones
-                return
-            
-            turning_points = np.array(turning_points[-20:]).reshape(-1, 1) if len(turning_points) >= 20 else np.array(turning_points).reshape(-1, 1)
-            
-            if len(turning_points) >= 3:
-                n_clusters = min(3, len(turning_points)//3)
-                if n_clusters >= 1:
-                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-                    clusters = kmeans.fit_predict(turning_points)
-                    
-                    unique_clusters = np.unique(clusters)
-                    for cluster_id in unique_clusters:
-                        cluster_points = turning_points[clusters == cluster_id]
-                        if len(cluster_points) >= 2:
-                            center_price = np.mean(cluster_points)
-                            points_density = len(cluster_points) / (np.std(cluster_points) + 1)
-                            distance_pct = abs(center_price - current_price) / current_price * 100
-                            strength = min(points_density / 10, 1.0) * (1 - distance_pct / 15)
-                            
-                            if center_price > current_price:
-                                attraction_direction = "↑"
-                            else:
-                                attraction_direction = "↓"
-                            
-                            if distance_pct < price_velocity * 2:
-                                orange_zones.append({
-                                    'price': float(center_price),
-                                    'type': 'magnetic_zone_4h',
-                                    'strength': float(strength),
-                                    'distance_pct': distance_pct,
-                                    'points_count': len(cluster_points),
-                                    'attraction_direction': attraction_direction,
-                                    'description': f'🧲{attraction_direction}',
-                                    'color': 'rgba(255, 165, 0, 0.5)',
-                                    'width': 2 + strength * 2,
-                                    'dash': 'dot' if strength < 0.5 else 'solid'
-                                })
-        except Exception as e:
-            pass
-        
-        orange_zones.sort(key=lambda x: x['strength'], reverse=True)
-        self.orange_magnetic_zones_4h[symbol] = orange_zones[:4]
-    
-    def calculate_yellow_liquidation_zones(self, df, symbol):
-        yellow_zones = []
-        
-        if df is None or len(df) < 50:
-            self.yellow_liquidation_zones[symbol] = yellow_zones
-            return
-        
-        try:
-            current_price = df['close'].iloc[-1]
-            
-            if len(df) >= 100:
-                high_idx = argrelextrema(df['high'].values, np.greater, order=10)[0]
-                low_idx = argrelextrema(df['low'].values, np.less, order=10)[0]
-                
-                support_levels = []
-                for idx in low_idx[-10:]:
-                    price = df['low'].iloc[idx]
-                    distance_pct = abs(price - current_price) / current_price * 100
-                    if distance_pct <= 5:
-                        touches = 0
-                        for i in range(max(0, idx-5), min(len(df), idx+5)):
-                            if abs(df['low'].iloc[i] - price) <= price * 0.005:
-                                touches += 1
-                        
-                        strength = min(touches / 5, 1.0)
-                        support_levels.append((price, strength))
-                
-                resistance_levels = []
-                for idx in high_idx[-10:]:
-                    price = df['high'].iloc[idx]
-                    distance_pct = abs(price - current_price) / current_price * 100
-                    if distance_pct <= 5:
-                        touches = 0
-                        for i in range(max(0, idx-5), min(len(df), idx+5)):
-                            if abs(df['high'].iloc[i] - price) <= price * 0.005:
-                                touches += 1
-                        
-                        strength = min(touches / 5, 1.0)
-                        resistance_levels.append((price, strength))
-                
-                for price, strength in support_levels[:3]:
-                    yellow_zones.append({
-                        'price': price,
-                        'type': 'support_zone',
-                        'strength': strength,
-                        'description': f'🟡 S ({strength:.2f})',
-                        'color': '#FFFF00',
-                        'width': 1 + (strength * 2),
-                        'dash': 'dash',
-                        'distance_pct': abs(price - current_price) / current_price * 100
-                    })
-                
-                for price, strength in resistance_levels[:3]:
-                    yellow_zones.append({
-                        'price': price,
-                        'type': 'resistance_zone',
-                        'strength': strength,
-                        'description': f'🟡 R ({strength:.2f})',
-                        'color': '#FFFF00',
-                        'width': 1 + (strength * 2),
-                        'dash': 'dash',
-                        'distance_pct': abs(price - current_price) / current_price * 100
-                    })
-        except Exception as e:
-            pass
-        
-        yellow_zones.sort(key=lambda x: x['strength'], reverse=True)
-        self.yellow_liquidation_zones[symbol] = yellow_zones[:5]
-    
-    def calculate_yellow_liquidation_zones_15m(self, df, symbol):
-        yellow_zones = []
-        
-        if df is None or len(df) < 50:
-            self.yellow_liquidation_zones_15m[symbol] = yellow_zones
-            return
-        
-        try:
-            current_price = df['close'].iloc[-1]
-            
-            if len(df) >= 100:
-                high_idx = argrelextrema(df['high'].values, np.greater, order=8)[0]
-                low_idx = argrelextrema(df['low'].values, np.less, order=8)[0]
-                
-                support_levels = []
-                for idx in low_idx[-15:]:
-                    price = df['low'].iloc[idx]
-                    distance_pct = abs(price - current_price) / current_price * 100
-                    if distance_pct <= 3:
-                        touches = 0
-                        for i in range(max(0, idx-3), min(len(df), idx+3)):
-                            if abs(df['low'].iloc[i] - price) <= price * 0.003:
-                                touches += 1
-                        
-                        strength = min(touches / 3, 1.0)
-                        support_levels.append((price, strength))
-                
-                resistance_levels = []
-                for idx in high_idx[-15:]:
-                    price = df['high'].iloc[idx]
-                    distance_pct = abs(price - current_price) / current_price * 100
-                    if distance_pct <= 3:
-                        touches = 0
-                        for i in range(max(0, idx-3), min(len(df), idx+3)):
-                            if abs(df['high'].iloc[i] - price) <= price * 0.003:
-                                touches += 1
-                        
-                        strength = min(touches / 3, 1.0)
-                        resistance_levels.append((price, strength))
-                
-                for price, strength in support_levels[:4]:
-                    yellow_zones.append({
-                        'price': price,
-                        'type': 'support_zone_15m',
-                        'strength': strength,
-                        'description': f'🟡 S15 ({strength:.2f})',
-                        'color': '#FFFF00',
-                        'width': 1 + (strength * 2),
-                        'dash': 'dash',
-                        'distance_pct': abs(price - current_price) / current_price * 100
-                    })
-                
-                for price, strength in resistance_levels[:4]:
-                    yellow_zones.append({
-                        'price': price,
-                        'type': 'resistance_zone_15m',
-                        'strength': strength,
-                        'description': f'🟡 R15 ({strength:.2f})',
-                        'color': '#FFFF00',
-                        'width': 1 + (strength * 2),
-                        'dash': 'dash',
-                        'distance_pct': abs(price - current_price) / current_price * 100
-                    })
-        except Exception as e:
-            pass
-        
-        yellow_zones.sort(key=lambda x: x['strength'], reverse=True)
-        self.yellow_liquidation_zones_15m[symbol] = yellow_zones[:5]
-    
-    def calculate_yellow_liquidation_zones_5m(self, df, symbol):
-        yellow_zones = []
-        
-        if df is None or len(df) < 30:
-            self.yellow_liquidation_zones_5m[symbol] = yellow_zones
-            return
-        
-        try:
-            current_price = df['close'].iloc[-1]
-            
-            if len(df) >= 80:
-                high_idx = argrelextrema(df['high'].values, np.greater, order=5)[0]
-                low_idx = argrelextrema(df['low'].values, np.less, order=5)[0]
-                
-                support_levels = []
-                for idx in low_idx[-20:]:
-                    price = df['low'].iloc[idx]
-                    distance_pct = abs(price - current_price) / current_price * 100
-                    if distance_pct <= 2:
-                        touches = 0
-                        for i in range(max(0, idx-2), min(len(df), idx+2)):
-                            if abs(df['low'].iloc[i] - price) <= price * 0.002:
-                                touches += 1
-                        
-                        strength = min(touches / 2, 1.0)
-                        support_levels.append((price, strength))
-                
-                resistance_levels = []
-                for idx in high_idx[-20:]:
-                    price = df['high'].iloc[idx]
-                    distance_pct = abs(price - current_price) / current_price * 100
-                    if distance_pct <= 2:
-                        touches = 0
-                        for i in range(max(0, idx-2), min(len(df), idx+2)):
-                            if abs(df['high'].iloc[i] - price) <= price * 0.002:
-                                touches += 1
-                        
-                        strength = min(touches / 2, 1.0)
-                        resistance_levels.append((price, strength))
-                
-                for price, strength in support_levels[:5]:
-                    yellow_zones.append({
-                        'price': price,
-                        'type': 'support_zone_5m',
-                        'strength': strength,
-                        'description': f'🟡 S5 ({strength:.2f})',
-                        'color': '#FFFF00',
-                        'width': 1 + (strength * 2),
-                        'dash': 'dash',
-                        'distance_pct': abs(price - current_price) / current_price * 100
-                    })
-                
-                for price, strength in resistance_levels[:5]:
-                    yellow_zones.append({
-                        'price': price,
-                        'type': 'resistance_zone_5m',
-                        'strength': strength,
-                        'description': f'🟡 R5 ({strength:.2f})',
-                        'color': '#FFFF00',
-                        'width': 1 + (strength * 2),
-                        'dash': 'dash',
-                        'distance_pct': abs(price - current_price) / current_price * 100
-                    })
-        except Exception as e:
-            pass
-        
-        yellow_zones.sort(key=lambda x: x['strength'], reverse=True)
-        self.yellow_liquidation_zones_5m[symbol] = yellow_zones[:6]
-    
-    def calculate_yellow_liquidation_zones_1m(self, df, symbol):
-        yellow_zones = []
-        
-        if df is None or len(df) < 30:
-            self.yellow_liquidation_zones_1m[symbol] = yellow_zones
-            return
-        
-        try:
-            current_price = df['close'].iloc[-1]
-            
-            if len(df) >= 60:
-                high_idx = argrelextrema(df['high'].values, np.greater, order=3)[0]
-                low_idx = argrelextrema(df['low'].values, np.less, order=3)[0]
-                
-                support_levels = []
-                for idx in low_idx[-25:]:
-                    price = df['low'].iloc[idx]
-                    distance_pct = abs(price - current_price) / current_price * 100
-                    if distance_pct <= 1.5:
-                        touches = 0
-                        for i in range(max(0, idx-1), min(len(df), idx+2)):
-                            if abs(df['low'].iloc[i] - price) <= price * 0.0015:
-                                touches += 1
-                        
-                        strength = min(touches / 2, 1.0)
-                        support_levels.append((price, strength))
-                
-                resistance_levels = []
-                for idx in high_idx[-25:]:
-                    price = df['high'].iloc[idx]
-                    distance_pct = abs(price - current_price) / current_price * 100
-                    if distance_pct <= 1.5:
-                        touches = 0
-                        for i in range(max(0, idx-1), min(len(df), idx+2)):
-                            if abs(df['high'].iloc[i] - price) <= price * 0.0015:
-                                touches += 1
-                        
-                        strength = min(touches / 2, 1.0)
-                        resistance_levels.append((price, strength))
-                
-                for price, strength in support_levels[:6]:
-                    yellow_zones.append({
-                        'price': price,
-                        'type': 'support_zone_1m',
-                        'strength': strength,
-                        'description': f'🟡 S1 ({strength:.2f})',
-                        'color': '#FFFF00',
-                        'width': 1 + (strength * 1.5),
-                        'dash': 'dash',
-                        'distance_pct': abs(price - current_price) / current_price * 100
-                    })
-                
-                for price, strength in resistance_levels[:6]:
-                    yellow_zones.append({
-                        'price': price,
-                        'type': 'resistance_zone_1m',
-                        'strength': strength,
-                        'description': f'🟡 R1 ({strength:.2f})',
-                        'color': '#FFFF00',
-                        'width': 1 + (strength * 1.5),
-                        'dash': 'dash',
-                        'distance_pct': abs(price - current_price) / current_price * 100
-                    })
-        except Exception as e:
-            pass
-        
-        yellow_zones.sort(key=lambda x: x['strength'], reverse=True)
-        self.yellow_liquidation_zones_1m[symbol] = yellow_zones[:8]
-    
-    def calculate_yellow_liquidation_zones_4h(self, df, symbol):
-        yellow_zones = []
-        
-        if df is None or len(df) < 50:
-            self.yellow_liquidation_zones_4h[symbol] = yellow_zones
-            return
-        
-        try:
-            current_price = df['close'].iloc[-1]
-            
-            if len(df) >= 100:
-                high_idx = argrelextrema(df['high'].values, np.greater, order=15)[0]
-                low_idx = argrelextrema(df['low'].values, np.less, order=15)[0]
-                
-                support_levels = []
-                for idx in low_idx[-8:]:
-                    price = df['low'].iloc[idx]
-                    distance_pct = abs(price - current_price) / current_price * 100
-                    if distance_pct <= 8:
-                        touches = 0
-                        for i in range(max(0, idx-3), min(len(df), idx+3)):
-                            if abs(df['low'].iloc[i] - price) <= price * 0.008:
-                                touches += 1
-                        
-                        strength = min(touches / 3, 1.0)
-                        support_levels.append((price, strength))
-                
-                resistance_levels = []
-                for idx in high_idx[-8:]:
-                    price = df['high'].iloc[idx]
-                    distance_pct = abs(price - current_price) / current_price * 100
-                    if distance_pct <= 8:
-                        touches = 0
-                        for i in range(max(0, idx-3), min(len(df), idx+3)):
-                            if abs(df['high'].iloc[i] - price) <= price * 0.008:
-                                touches += 1
-                        
-                        strength = min(touches / 3, 1.0)
-                        resistance_levels.append((price, strength))
-                
-                for price, strength in support_levels[:3]:
-                    yellow_zones.append({
-                        'price': price,
-                        'type': 'support_zone_4h',
-                        'strength': strength,
-                        'description': f'🟡 S4h ({strength:.2f})',
-                        'color': '#FFFF00',
-                        'width': 1 + (strength * 2),
-                        'dash': 'dash',
-                        'distance_pct': abs(price - current_price) / current_price * 100
-                    })
-                
-                for price, strength in resistance_levels[:3]:
-                    yellow_zones.append({
-                        'price': price,
-                        'type': 'resistance_zone_4h',
-                        'strength': strength,
-                        'description': f'🟡 R4h ({strength:.2f})',
-                        'color': '#FFFF00',
-                        'width': 1 + (strength * 2),
-                        'dash': 'dash',
-                        'distance_pct': abs(price - current_price) / current_price * 100
-                    })
-        except Exception as e:
-            pass
-        
-        yellow_zones.sort(key=lambda x: x['strength'], reverse=True)
-        self.yellow_liquidation_zones_4h[symbol] = yellow_zones[:5]
     
     def calculate_blue_liquidity_lines(self, df_1h, current_price, symbol):
         blue_lines = []
@@ -2526,6 +1989,351 @@ class CryptoAnalyzer:
         except Exception as e:
             return [], []
     
+    def calculate_orange_magnetic_zones(self, df, current_price, symbol):
+        orange_zones = []
+        
+        if df is None or len(df) < 100:
+            self.orange_magnetic_zones[symbol] = orange_zones
+            return
+        
+        try:
+            close_prices = df['close'].values
+            returns = np.diff(close_prices) / close_prices[:-1]
+            price_velocity = np.mean(np.abs(returns[-20:])) * 100 if len(returns) >= 20 else 1
+            
+            turning_points = []
+            for i in range(2, len(df)-2):
+                if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
+                    df['high'].iloc[i] > df['high'].iloc[i+1] and
+                    df['close'].iloc[i] > df['open'].iloc[i]):
+                    turning_points.append(df['high'].iloc[i])
+                
+                if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
+                    df['low'].iloc[i] < df['low'].iloc[i+1] and
+                    df['close'].iloc[i] < df['open'].iloc[i]):
+                    turning_points.append(df['low'].iloc[i])
+            
+            if len(turning_points) < 5:
+                self.orange_magnetic_zones[symbol] = orange_zones
+                return
+            
+            turning_points = np.array(turning_points[-30:]).reshape(-1, 1) if len(turning_points) >= 30 else np.array(turning_points).reshape(-1, 1)
+            
+            if len(turning_points) >= 3:
+                n_clusters = min(3, len(turning_points)//3)
+                if n_clusters >= 1:
+                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                    clusters = kmeans.fit_predict(turning_points)
+                    
+                    unique_clusters = np.unique(clusters)
+                    for cluster_id in unique_clusters:
+                        cluster_points = turning_points[clusters == cluster_id]
+                        if len(cluster_points) >= 2:
+                            center_price = np.mean(cluster_points)
+                            points_density = len(cluster_points) / (np.std(cluster_points) + 1)
+                            distance_pct = abs(center_price - current_price) / current_price * 100
+                            strength = min(points_density / 10, 1.0) * (1 - distance_pct / 10)
+                            
+                            if center_price > current_price:
+                                attraction_direction = "↑"
+                            else:
+                                attraction_direction = "↓"
+                            
+                            if distance_pct < price_velocity * 2:
+                                orange_zones.append({
+                                    'price': float(center_price),
+                                    'type': 'magnetic_zone',
+                                    'strength': float(strength),
+                                    'distance_pct': distance_pct,
+                                    'points_count': len(cluster_points),
+                                    'attraction_direction': attraction_direction,
+                                    'description': f'🧲 {attraction_direction}',
+                                    'color': 'rgba(255, 165, 0, 0.5)',
+                                    'width': 2 + strength * 2,
+                                    'dash': 'dot' if strength < 0.5 else 'solid'
+                                })
+        except Exception as e:
+            pass
+        
+        orange_zones.sort(key=lambda x: x['strength'], reverse=True)
+        self.orange_magnetic_zones[symbol] = orange_zones[:5]
+    
+    def calculate_orange_magnetic_zones_15m(self, df, current_price, symbol):
+        orange_zones = []
+        
+        if df is None or len(df) < 100:
+            self.orange_magnetic_zones_15m[symbol] = orange_zones
+            return
+        
+        try:
+            close_prices = df['close'].values
+            returns = np.diff(close_prices) / close_prices[:-1]
+            price_velocity = np.mean(np.abs(returns[-30:])) * 100 if len(returns) >= 30 else 1
+            
+            turning_points = []
+            for i in range(2, len(df)-2):
+                if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
+                    df['high'].iloc[i] > df['high'].iloc[i+1] and
+                    df['close'].iloc[i] > df['open'].iloc[i]):
+                    turning_points.append(df['high'].iloc[i])
+                
+                if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
+                    df['low'].iloc[i] < df['low'].iloc[i+1] and
+                    df['close'].iloc[i] < df['open'].iloc[i]):
+                    turning_points.append(df['low'].iloc[i])
+            
+            if len(turning_points) < 5:
+                self.orange_magnetic_zones_15m[symbol] = orange_zones
+                return
+            
+            turning_points = np.array(turning_points[-40:]).reshape(-1, 1) if len(turning_points) >= 40 else np.array(turning_points).reshape(-1, 1)
+            
+            if len(turning_points) >= 3:
+                n_clusters = min(4, len(turning_points)//3)
+                if n_clusters >= 1:
+                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                    clusters = kmeans.fit_predict(turning_points)
+                    
+                    unique_clusters = np.unique(clusters)
+                    for cluster_id in unique_clusters:
+                        cluster_points = turning_points[clusters == cluster_id]
+                        if len(cluster_points) >= 2:
+                            center_price = np.mean(cluster_points)
+                            points_density = len(cluster_points) / (np.std(cluster_points) + 1)
+                            distance_pct = abs(center_price - current_price) / current_price * 100
+                            strength = min(points_density / 10, 1.0) * (1 - distance_pct / 8)
+                            
+                            if center_price > current_price:
+                                attraction_direction = "↑"
+                            else:
+                                attraction_direction = "↓"
+                            
+                            if distance_pct < price_velocity * 2:
+                                orange_zones.append({
+                                    'price': float(center_price),
+                                    'type': 'magnetic_zone_15m',
+                                    'strength': float(strength),
+                                    'distance_pct': distance_pct,
+                                    'points_count': len(cluster_points),
+                                    'attraction_direction': attraction_direction,
+                                    'description': f'🧲{attraction_direction}',
+                                    'color': 'rgba(255, 165, 0, 0.5)',
+                                    'width': 2 + strength * 2,
+                                    'dash': 'dot' if strength < 0.5 else 'solid'
+                                })
+        except Exception as e:
+            pass
+        
+        orange_zones.sort(key=lambda x: x['strength'], reverse=True)
+        self.orange_magnetic_zones_15m[symbol] = orange_zones[:5]
+    
+    def calculate_orange_magnetic_zones_5m(self, df, current_price, symbol):
+        orange_zones = []
+        
+        if df is None or len(df) < 80:
+            self.orange_magnetic_zones_5m[symbol] = orange_zones
+            return
+        
+        try:
+            close_prices = df['close'].values
+            returns = np.diff(close_prices) / close_prices[:-1]
+            price_velocity = np.mean(np.abs(returns[-40:])) * 100 if len(returns) >= 40 else 1
+            
+            turning_points = []
+            for i in range(2, len(df)-2):
+                if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
+                    df['high'].iloc[i] > df['high'].iloc[i+1] and
+                    df['close'].iloc[i] > df['open'].iloc[i]):
+                    turning_points.append(df['high'].iloc[i])
+                
+                if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
+                    df['low'].iloc[i] < df['low'].iloc[i+1] and
+                    df['close'].iloc[i] < df['open'].iloc[i]):
+                    turning_points.append(df['low'].iloc[i])
+            
+            if len(turning_points) < 5:
+                self.orange_magnetic_zones_5m[symbol] = orange_zones
+                return
+            
+            turning_points = np.array(turning_points[-50:]).reshape(-1, 1) if len(turning_points) >= 50 else np.array(turning_points).reshape(-1, 1)
+            
+            if len(turning_points) >= 3:
+                n_clusters = min(5, len(turning_points)//3)
+                if n_clusters >= 1:
+                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                    clusters = kmeans.fit_predict(turning_points)
+                    
+                    unique_clusters = np.unique(clusters)
+                    for cluster_id in unique_clusters:
+                        cluster_points = turning_points[clusters == cluster_id]
+                        if len(cluster_points) >= 2:
+                            center_price = np.mean(cluster_points)
+                            points_density = len(cluster_points) / (np.std(cluster_points) + 1)
+                            distance_pct = abs(center_price - current_price) / current_price * 100
+                            strength = min(points_density / 10, 1.0) * (1 - distance_pct / 5)
+                            
+                            if center_price > current_price:
+                                attraction_direction = "↑"
+                            else:
+                                attraction_direction = "↓"
+                            
+                            if distance_pct < price_velocity * 2:
+                                orange_zones.append({
+                                    'price': float(center_price),
+                                    'type': 'magnetic_zone_5m',
+                                    'strength': float(strength),
+                                    'distance_pct': distance_pct,
+                                    'points_count': len(cluster_points),
+                                    'attraction_direction': attraction_direction,
+                                    'description': f'🧲{attraction_direction}',
+                                    'color': 'rgba(255, 165, 0, 0.5)',
+                                    'width': 2 + strength * 2,
+                                    'dash': 'dot' if strength < 0.5 else 'solid'
+                                })
+        except Exception as e:
+            pass
+        
+        orange_zones.sort(key=lambda x: x['strength'], reverse=True)
+        self.orange_magnetic_zones_5m[symbol] = orange_zones[:6]
+    
+    def calculate_orange_magnetic_zones_1m(self, df, current_price, symbol):
+        orange_zones = []
+        
+        if df is None or len(df) < 60:
+            self.orange_magnetic_zones_1m[symbol] = orange_zones
+            return
+        
+        try:
+            close_prices = df['close'].values
+            returns = np.diff(close_prices) / close_prices[:-1]
+            price_velocity = np.mean(np.abs(returns[-50:])) * 100 if len(returns) >= 50 else 1
+            
+            turning_points = []
+            for i in range(2, len(df)-2):
+                if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
+                    df['high'].iloc[i] > df['high'].iloc[i+1] and
+                    df['close'].iloc[i] > df['open'].iloc[i]):
+                    turning_points.append(df['high'].iloc[i])
+                
+                if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
+                    df['low'].iloc[i] < df['low'].iloc[i+1] and
+                    df['close'].iloc[i] < df['open'].iloc[i]):
+                    turning_points.append(df['low'].iloc[i])
+            
+            if len(turning_points) < 5:
+                self.orange_magnetic_zones_1m[symbol] = orange_zones
+                return
+            
+            turning_points = np.array(turning_points[-60:]).reshape(-1, 1) if len(turning_points) >= 60 else np.array(turning_points).reshape(-1, 1)
+            
+            if len(turning_points) >= 3:
+                n_clusters = min(6, len(turning_points)//3)
+                if n_clusters >= 1:
+                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                    clusters = kmeans.fit_predict(turning_points)
+                    
+                    unique_clusters = np.unique(clusters)
+                    for cluster_id in unique_clusters:
+                        cluster_points = turning_points[clusters == cluster_id]
+                        if len(cluster_points) >= 2:
+                            center_price = np.mean(cluster_points)
+                            points_density = len(cluster_points) / (np.std(cluster_points) + 1)
+                            distance_pct = abs(center_price - current_price) / current_price * 100
+                            strength = min(points_density / 10, 1.0) * (1 - distance_pct / 3)
+                            
+                            if center_price > current_price:
+                                attraction_direction = "↑"
+                            else:
+                                attraction_direction = "↓"
+                            
+                            if distance_pct < price_velocity * 1.5:
+                                orange_zones.append({
+                                    'price': float(center_price),
+                                    'type': 'magnetic_zone_1m',
+                                    'strength': float(strength),
+                                    'distance_pct': distance_pct,
+                                    'points_count': len(cluster_points),
+                                    'attraction_direction': attraction_direction,
+                                    'description': f'🧲{attraction_direction}',
+                                    'color': 'rgba(255, 165, 0, 0.5)',
+                                    'width': 1.5 + strength * 2,
+                                    'dash': 'dot' if strength < 0.5 else 'solid'
+                                })
+        except Exception as e:
+            pass
+        
+        orange_zones.sort(key=lambda x: x['strength'], reverse=True)
+        self.orange_magnetic_zones_1m[symbol] = orange_zones[:7]
+    
+    def calculate_orange_magnetic_zones_4h(self, df, current_price, symbol):
+        orange_zones = []
+        
+        if df is None or len(df) < 50:
+            self.orange_magnetic_zones_4h[symbol] = orange_zones
+            return
+        
+        try:
+            close_prices = df['close'].values
+            returns = np.diff(close_prices) / close_prices[:-1]
+            price_velocity = np.mean(np.abs(returns[-15:])) * 100 if len(returns) >= 15 else 1
+            
+            turning_points = []
+            for i in range(2, len(df)-2):
+                if (df['high'].iloc[i] > df['high'].iloc[i-1] and 
+                    df['high'].iloc[i] > df['high'].iloc[i+1] and
+                    df['close'].iloc[i] > df['open'].iloc[i]):
+                    turning_points.append(df['high'].iloc[i])
+                
+                if (df['low'].iloc[i] < df['low'].iloc[i-1] and 
+                    df['low'].iloc[i] < df['low'].iloc[i+1] and
+                    df['close'].iloc[i] < df['open'].iloc[i]):
+                    turning_points.append(df['low'].iloc[i])
+            
+            if len(turning_points) < 5:
+                self.orange_magnetic_zones_4h[symbol] = orange_zones
+                return
+            
+            turning_points = np.array(turning_points[-20:]).reshape(-1, 1) if len(turning_points) >= 20 else np.array(turning_points).reshape(-1, 1)
+            
+            if len(turning_points) >= 3:
+                n_clusters = min(3, len(turning_points)//3)
+                if n_clusters >= 1:
+                    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                    clusters = kmeans.fit_predict(turning_points)
+                    
+                    unique_clusters = np.unique(clusters)
+                    for cluster_id in unique_clusters:
+                        cluster_points = turning_points[clusters == cluster_id]
+                        if len(cluster_points) >= 2:
+                            center_price = np.mean(cluster_points)
+                            points_density = len(cluster_points) / (np.std(cluster_points) + 1)
+                            distance_pct = abs(center_price - current_price) / current_price * 100
+                            strength = min(points_density / 10, 1.0) * (1 - distance_pct / 15)
+                            
+                            if center_price > current_price:
+                                attraction_direction = "↑"
+                            else:
+                                attraction_direction = "↓"
+                            
+                            if distance_pct < price_velocity * 2:
+                                orange_zones.append({
+                                    'price': float(center_price),
+                                    'type': 'magnetic_zone_4h',
+                                    'strength': float(strength),
+                                    'distance_pct': distance_pct,
+                                    'points_count': len(cluster_points),
+                                    'attraction_direction': attraction_direction,
+                                    'description': f'🧲{attraction_direction}',
+                                    'color': 'rgba(255, 165, 0, 0.5)',
+                                    'width': 2 + strength * 2,
+                                    'dash': 'dot' if strength < 0.5 else 'solid'
+                                })
+        except Exception as e:
+            pass
+        
+        orange_zones.sort(key=lambda x: x['strength'], reverse=True)
+        self.orange_magnetic_zones_4h[symbol] = orange_zones[:4]
+    
     def create_main_chart(self, df_1h, symbol):
         if df_1h is None or df_1h.empty:
             return go.Figure()
@@ -2543,6 +2351,7 @@ class CryptoAnalyzer:
             decreasing_line_color='#ff0066'
         ), row=1, col=1)
         
+        # Blue Liquidity Lines
         if symbol in self.blue_liquidity_lines:
             for line in self.blue_liquidity_lines[symbol]:
                 fig.add_shape(
@@ -2569,6 +2378,7 @@ class CryptoAnalyzer:
                     row=1, col=1
                 )
         
+        # White Liquidity Levels
         if symbol in self.white_liquidity_levels:
             for level in self.white_liquidity_levels[symbol]:
                 fig.add_shape(
@@ -2595,8 +2405,10 @@ class CryptoAnalyzer:
                     row=1, col=1
                 )
         
+        # Yellow Liquidation Zones (المحسنة من الكود الثاني)
         if symbol in self.yellow_liquidation_zones:
             for zone in self.yellow_liquidation_zones[symbol]:
+                # خط أصفر متقطع رقيق مع عرض مناسب للقوة
                 fig.add_shape(
                     type='line',
                     x0=df_1h['timestamp'].iloc[0],
@@ -2606,21 +2418,41 @@ class CryptoAnalyzer:
                     line=dict(color=zone['color'], width=zone['width'], dash=zone['dash']),
                     row=1, col=1
                 )
+                
+                # إضافة منطقة خلفية صفراء خفيفة حول مستوى التصفية
+                zone_range = zone['price'] * 0.002  # 0.2% حول المستوى
+                fig.add_shape(
+                    type='rect',
+                    x0=df_1h['timestamp'].iloc[0],
+                    x1=df_1h['timestamp'].iloc[-1],
+                    y0=zone['price'] - zone_range,
+                    y1=zone['price'] + zone_range,
+                    fillcolor='rgba(255, 255, 0, 0.08)',
+                    line=dict(width=0),
+                    row=1, col=1
+                )
+                
+                # نص توضيحي مع القوة ونسبة الشمعة
+                description = f"🟡 {zone['type'].upper()} {zone['strength']:.1f}x"
+                if zone.get('confirmed', False):
+                    description += " ✓"
+                
                 fig.add_annotation(
                     x=df_1h['timestamp'].iloc[-1],
                     y=zone['price'],
-                    text=zone['description'],
+                    text=description,
                     showarrow=True,
                     arrowhead=1,
                     ax=35,
                     ay=0,
-                    bgcolor='rgba(255, 255, 0, 0.6)',
+                    bgcolor='rgba(255, 255, 0, 0.7)',
                     bordercolor='#FFFF00',
                     borderwidth=1,
-                    font=dict(color='black', size=7),
+                    font=dict(color='black', size=8, weight='bold'),
                     row=1, col=1
                 )
         
+        # Orange Magnetic Zones
         if symbol in self.orange_magnetic_zones:
             for zone in self.orange_magnetic_zones[symbol]:
                 fig.add_shape(
@@ -2730,6 +2562,7 @@ class CryptoAnalyzer:
                     row=1, col=1
                 )
         
+        # Yellow Liquidation Zones - 15m
         if symbol in self.yellow_liquidation_zones_15m:
             for zone in self.yellow_liquidation_zones_15m[symbol]:
                 fig.add_shape(
@@ -2741,18 +2574,30 @@ class CryptoAnalyzer:
                     line=dict(color=zone['color'], width=zone['width'], dash=zone['dash']),
                     row=1, col=1
                 )
+                # منطقة خلفية
+                zone_range = zone['price'] * 0.002
+                fig.add_shape(
+                    type='rect',
+                    x0=df_15m['timestamp'].iloc[0],
+                    x1=df_15m['timestamp'].iloc[-1],
+                    y0=zone['price'] - zone_range,
+                    y1=zone['price'] + zone_range,
+                    fillcolor='rgba(255, 255, 0, 0.08)',
+                    line=dict(width=0),
+                    row=1, col=1
+                )
                 fig.add_annotation(
                     x=df_15m['timestamp'].iloc[-1],
                     y=zone['price'],
-                    text=zone['description'],
+                    text=f"🟡 {zone['type'].upper()} {zone['strength']:.1f}x",
                     showarrow=True,
                     arrowhead=1,
                     ax=25,
                     ay=0,
-                    bgcolor='rgba(255, 255, 0, 0.5)',
+                    bgcolor='rgba(255, 255, 0, 0.7)',
                     bordercolor='#FFFF00',
                     borderwidth=1,
-                    font=dict(color='black', size=6),
+                    font=dict(color='black', size=6, weight='bold'),
                     row=1, col=1
                 )
         
@@ -2863,6 +2708,7 @@ class CryptoAnalyzer:
                     row=1, col=1
                 )
         
+        # Yellow Liquidation Zones - 5m
         if symbol in self.yellow_liquidation_zones_5m:
             for zone in self.yellow_liquidation_zones_5m[symbol]:
                 fig.add_shape(
@@ -2874,18 +2720,29 @@ class CryptoAnalyzer:
                     line=dict(color=zone['color'], width=zone['width'], dash=zone['dash']),
                     row=1, col=1
                 )
+                zone_range = zone['price'] * 0.0015
+                fig.add_shape(
+                    type='rect',
+                    x0=df_5m['timestamp'].iloc[0],
+                    x1=df_5m['timestamp'].iloc[-1],
+                    y0=zone['price'] - zone_range,
+                    y1=zone['price'] + zone_range,
+                    fillcolor='rgba(255, 255, 0, 0.08)',
+                    line=dict(width=0),
+                    row=1, col=1
+                )
                 fig.add_annotation(
                     x=df_5m['timestamp'].iloc[-1],
                     y=zone['price'],
-                    text=zone['description'],
+                    text=f"🟡 {zone['type'].upper()} {zone['strength']:.1f}x",
                     showarrow=True,
                     arrowhead=1,
                     ax=20,
                     ay=0,
-                    bgcolor='rgba(255, 255, 0, 0.5)',
+                    bgcolor='rgba(255, 255, 0, 0.7)',
                     bordercolor='#FFFF00',
                     borderwidth=1,
-                    font=dict(color='black', size=6),
+                    font=dict(color='black', size=6, weight='bold'),
                     row=1, col=1
                 )
         
@@ -2996,6 +2853,7 @@ class CryptoAnalyzer:
                     row=1, col=1
                 )
         
+        # Yellow Liquidation Zones - 1m
         if symbol in self.yellow_liquidation_zones_1m:
             for zone in self.yellow_liquidation_zones_1m[symbol]:
                 fig.add_shape(
@@ -3007,18 +2865,29 @@ class CryptoAnalyzer:
                     line=dict(color=zone['color'], width=zone['width'], dash=zone['dash']),
                     row=1, col=1
                 )
+                zone_range = zone['price'] * 0.001
+                fig.add_shape(
+                    type='rect',
+                    x0=df_1m['timestamp'].iloc[0],
+                    x1=df_1m['timestamp'].iloc[-1],
+                    y0=zone['price'] - zone_range,
+                    y1=zone['price'] + zone_range,
+                    fillcolor='rgba(255, 255, 0, 0.08)',
+                    line=dict(width=0),
+                    row=1, col=1
+                )
                 fig.add_annotation(
                     x=df_1m['timestamp'].iloc[-1],
                     y=zone['price'],
-                    text=zone['description'],
+                    text=f"🟡 {zone['type'].upper()} {zone['strength']:.1f}x",
                     showarrow=True,
                     arrowhead=1,
                     ax=15,
                     ay=0,
-                    bgcolor='rgba(255, 255, 0, 0.5)',
+                    bgcolor='rgba(255, 255, 0, 0.7)',
                     bordercolor='#FFFF00',
                     borderwidth=1,
-                    font=dict(color='black', size=5),
+                    font=dict(color='black', size=5, weight='bold'),
                     row=1, col=1
                 )
         
@@ -3129,6 +2998,7 @@ class CryptoAnalyzer:
                     row=1, col=1
                 )
         
+        # Yellow Liquidation Zones - 4h
         if symbol in self.yellow_liquidation_zones_4h:
             for zone in self.yellow_liquidation_zones_4h[symbol]:
                 fig.add_shape(
@@ -3140,18 +3010,29 @@ class CryptoAnalyzer:
                     line=dict(color=zone['color'], width=zone['width'], dash=zone['dash']),
                     row=1, col=1
                 )
+                zone_range = zone['price'] * 0.003
+                fig.add_shape(
+                    type='rect',
+                    x0=df_4h['timestamp'].iloc[0],
+                    x1=df_4h['timestamp'].iloc[-1],
+                    y0=zone['price'] - zone_range,
+                    y1=zone['price'] + zone_range,
+                    fillcolor='rgba(255, 255, 0, 0.08)',
+                    line=dict(width=0),
+                    row=1, col=1
+                )
                 fig.add_annotation(
                     x=df_4h['timestamp'].iloc[-1],
                     y=zone['price'],
-                    text=zone['description'],
+                    text=f"🟡 {zone['type'].upper()} {zone['strength']:.1f}x",
                     showarrow=True,
                     arrowhead=1,
                     ax=35,
                     ay=0,
-                    bgcolor='rgba(255, 255, 0, 0.6)',
+                    bgcolor='rgba(255, 255, 0, 0.7)',
                     bordercolor='#FFFF00',
                     borderwidth=1,
-                    font=dict(color='black', size=7),
+                    font=dict(color='black', size=7, weight='bold'),
                     row=1, col=1
                 )
         
@@ -3459,7 +3340,7 @@ def payment_page(user_manager):
     - 5 Timeframes (1m, 5m, 15m, 1h, 4h)
     - Blue Liquidity Lines
     - White Strong Levels
-    - Yellow Liquidation Zones
+    - Yellow Liquidation Zones (Enhanced with Strength & Percentage)
     - Orange Magnetic Zones
     """)
 
@@ -3522,6 +3403,32 @@ def analysis_interface():
                                     fig = analyzer.create_1m_chart(df, symbol)
                                 
                                 st.plotly_chart(fig, use_container_width=True)
+                                
+                                # عرض معلومات إضافية عن مناطق التصفية
+                                if tf == '4h' and symbol in analyzer.yellow_liquidation_zones_4h:
+                                    with st.expander("📊 تفاصيل مناطق التصفية - 4h"):
+                                        for zone in analyzer.yellow_liquidation_zones_4h[symbol]:
+                                            st.write(f"**{zone['type'].upper()}** - السعر: {zone['price']:.4f} | القوة: {zone['strength']:.1f}x | التأكيد: {'✅' if zone.get('confirmed', False) else '❌'}")
+                                
+                                elif tf == '1h' and symbol in analyzer.yellow_liquidation_zones:
+                                    with st.expander("📊 تفاصيل مناطق التصفية - 1h"):
+                                        for zone in analyzer.yellow_liquidation_zones[symbol]:
+                                            st.write(f"**{zone['type'].upper()}** - السعر: {zone['price']:.4f} | القوة: {zone['strength']:.1f}x | التأكيد: {'✅' if zone.get('confirmed', False) else '❌'}")
+                                
+                                elif tf == '15m' and symbol in analyzer.yellow_liquidation_zones_15m:
+                                    with st.expander("📊 تفاصيل مناطق التصفية - 15m"):
+                                        for zone in analyzer.yellow_liquidation_zones_15m[symbol]:
+                                            st.write(f"**{zone['type'].upper()}** - السعر: {zone['price']:.4f} | القوة: {zone['strength']:.1f}x | التأكيد: {'✅' if zone.get('confirmed', False) else '❌'}")
+                                
+                                elif tf == '5m' and symbol in analyzer.yellow_liquidation_zones_5m:
+                                    with st.expander("📊 تفاصيل مناطق التصفية - 5m"):
+                                        for zone in analyzer.yellow_liquidation_zones_5m[symbol]:
+                                            st.write(f"**{zone['type'].upper()}** - السعر: {zone['price']:.4f} | القوة: {zone['strength']:.1f}x | التأكيد: {'✅' if zone.get('confirmed', False) else '❌'}")
+                                
+                                elif tf == '1m' and symbol in analyzer.yellow_liquidation_zones_1m:
+                                    with st.expander("📊 تفاصيل مناطق التصفية - 1m"):
+                                        for zone in analyzer.yellow_liquidation_zones_1m[symbol]:
+                                            st.write(f"**{zone['type'].upper()}** - السعر: {zone['price']:.4f} | القوة: {zone['strength']:.1f}x | التأكيد: {'✅' if zone.get('confirmed', False) else '❌'}")
                             else:
                                 st.error(f"❌ No data for {tf}")
                 else:
